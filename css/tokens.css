@@ -1,0 +1,68 @@
+/* ============================================================
+   B2B Design Tokens — مصدر الحقيقة الوحيد للألوان والقياسات
+   مأخوذة حرفيًا من دليل التصميم (UI Style Guide)
+   ============================================================ */
+:root {
+  /* الألوان الأساسية */
+  --c-primary: #1BC4DB;        /* سماوي — الأزرار الرئيسية، الفلاتر النشطة */
+  --c-primary-soft: #E4F8FB;
+  --c-primary-border: #7FD6E5;
+  --c-purple: #654E92;         /* بنفسجي — العنصر النشط بالشريط الجانبي، الأرقام */
+  --c-purple-soft: #EFEAF8;
+  --c-purple-border: #DCD2EE;
+
+  /* تدرج البطاقات المميزة (المحفظة / بانر المهام) */
+  --grad-hero: linear-gradient(140deg, #654E92 0%, #3C79F5 70%, #1BC4DB 115%);
+  --grad-bar: linear-gradient(90deg, #1BC4DB, #654E92);
+
+  /* النصوص */
+  --c-ink: #262433;
+  --c-muted: #7D7990;
+  --c-faint: #A8A4B8;
+
+  /* الخلفيات والحدود */
+  --c-page: #F2F4F8;
+  --c-card-border: #E9E6F0;
+  --c-divider: #F1EFF6;
+  --c-subtle: #FAF9FC;
+  --c-chip-bg: #F4F3F8;
+  --c-seg-bg: #EBE8F2;
+
+  /* الحالات الدلالية: نص / خلفية / حد */
+  --c-success: #1D7A3E;      --c-success-bg: #E6F9EC;  --c-success-border: #BFE8CC;
+  --c-info: #0D7F93;         --c-info-bg: #D9F4F9;     --c-info-border: #A8E4EF;
+  --c-blue: #3C79F5;         --c-blue-bg: #E4EDFE;
+  --c-warn: #B26A16;         --c-warn-bg: #FBF0DD;     --c-warn-border: #F0DEB8;
+  --c-warn-deep: #8A5F10;
+  --c-danger: #B23B3B;       --c-danger-bg: #FDECEC;   --c-danger-border: #F3C4C4;
+  --c-danger-deep: #8F3030;
+  --c-badge: #E5484D;        /* شارة العدادات الحمراء */
+
+  /* الخطوط */
+  --font-ar: 'Almarai', 'Quicksand', sans-serif;
+  --font-num: 'Quicksand', sans-serif;   /* كل الأرقام والمعرفات والطوابع الزمنية */
+
+  /* الأقطار */
+  --r-card: 18px;
+  --r-modal: 22px;
+  --r-input: 13px;
+  --r-btn: 13px;
+  --r-pill: 999px;
+
+  /* الطبقات */
+  --z-topbar: 40;
+  --z-popover: 60;
+  --z-drawer: 100;
+  --z-modal: 110;
+  --z-toast: 220;
+
+  /* الظلال */
+  --shadow-hero: 0 14px 32px rgba(58, 46, 94, .22);
+  --shadow-pop: 0 18px 44px rgba(38, 33, 58, .16);
+  --shadow-modal: 0 30px 80px rgba(24, 19, 40, .3);
+  --shadow-drawer: 12px 0 44px rgba(24, 19, 40, .2);
+
+  /* الحاوية */
+  --content-max: 1200px;
+  --sidebar-w: 250px;
+}
