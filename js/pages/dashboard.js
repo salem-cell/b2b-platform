@@ -5,7 +5,6 @@
 import { esc } from '../core/dom.js';
 import { fmt, fmt0 } from '../core/format.js';
 import { orderChip } from '../ui.js';
-import { orderTotal } from '../actions.js';
 import { PRODUCTS } from '../data/products.js';
 
 function kpiCard(k) {
