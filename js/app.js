@@ -62,7 +62,7 @@ const ACTIONS = {
   closeAll: () => A.closeAll(),
   goWallet: () => { A.go('wallet'); setState({ finSeg: 'w' }); },
   goInvoices: () => { A.go('wallet'); setState({ finSeg: 'i' }); },
-  backClients: () => A.go(getState().role === 'fr' ? 'frs' : 'clients'),
+  backClients: () => A.backFromClientProfile(),
 
   // إشعارات
   toggleNotif: () => A.toggleNotif(),
@@ -126,8 +126,17 @@ const ACTIONS = {
   reportXls: () => A.say('جارٍ تجهيز ملف Excel — يصلك إشعار عند الجاهزية'),
 
   // فرنشايز
-  openFrNew: () => setState({ modal: { k: 'frNew' } }),
+  openFrNew: () => setState({ modal: { k: 'frNew' }, frKind: 'normal', frRegion: '' }),
+  setFrKind: (el) => setState({ frKind: el.dataset.arg }),
   sendInvite: () => A.sendInvite(),
+  addSubFranchisee: () => A.addSubFranchisee(),
+  openSubProfile: (el) => {
+    const st = getState();
+    const f = st.frs.find((x) => x.id === Number(el.dataset.arg));
+    const client = f && st.clients.find((x) => x.name === f.name);
+    if (client) A.openClientProfile(client.id, false, st.clientSel);
+    else A.say('لم يُفعَّل حسابه بعد — بانتظار تعميد B2B');
+  },
   approveFranchisee: (el) => A.approveFranchisee(Number(el.dataset.arg)),
   toggleFranchisee: (el) => A.toggleFranchisee(Number(el.dataset.arg)),
   openFranchisee: (el) => {
@@ -156,9 +165,14 @@ const ACTIONS = {
     const st = getState();
     const name = (st.clBrName || '').trim();
     if (!name) { A.say('اكتب اسم الفرع أولًا'); return; }
+    if (!st.clBrLoc) {
+      A.say('حدد موقع الفرع على الخريطة أولًا — الموقع إلزامي');
+      setState({ modal: { k: 'mapPick' }, mapTarget: 'cl', mapPin: null, mapSearch: '' });
+      return;
+    }
     const c = st.clients.find((x) => x.id === st.clientSel);
-    A.updateClient(c.id, (x) => ({ ...x, branches: [...x.branches, { name, city: c.city }] }));
-    setState({ clBrName: '' });
+    A.updateClient(c.id, (x) => ({ ...x, branches: [...x.branches, { name, city: c.city, loc: st.clBrLoc }] }));
+    setState({ clBrName: '', clBrLoc: null });
     A.say(`أُضيف ${name} لفروع ${c.name}`);
   },
   clientDelBranch: (el) => {
@@ -203,6 +217,32 @@ const ACTIONS = {
 
   // إدارة الكتالوج (B2B)
   toggleProductAvailability: (el) => A.toggleProductAvailability(el.dataset.arg),
+
+  // الخرائط ومواقع الفروع
+  openMapPickBr: () => {
+    const st = getState();
+    setState({ modal: { k: 'mapPick' }, mapTarget: 'br', mapPin: st.brLoc ? { x: st.brLoc.x, y: st.brLoc.y } : null, mapSearch: '' });
+  },
+  openMapPickCl: () => {
+    const st = getState();
+    setState({ modal: { k: 'mapPick' }, mapTarget: 'cl', mapPin: st.clBrLoc ? { x: st.clBrLoc.x, y: st.clBrLoc.y } : null, mapSearch: '' });
+  },
+  mapClick: (el, e) => {
+    const r = el.getBoundingClientRect();
+    const x = Math.round((r.right - e.clientX) / r.width * 100);   // نسبة من اليمين (RTL)
+    const y = Math.round((e.clientY - r.top) / r.height * 100);
+    setState({ mapPin: { x: Math.max(2, Math.min(98, x)), y: Math.max(4, Math.min(96, y)) } });
+  },
+  confirmMapPick: () => A.confirmMapPick(),
+  openBranchDet: (el) => setState({ modal: { k: 'brDet' }, brDetName: el.dataset.arg }),
+  openMapView: (el) => {
+    const b = getState().branches.find((x) => x.name === el.dataset.arg);
+    if (b && b.loc) setState({ modal: { k: 'mapView' }, mapView: { name: b.name, ...b.loc } });
+  },
+  backToBranchDet: (el) => setState({ modal: { k: 'brDet' }, brDetName: el.dataset.arg }),
+  toggleBranch: (el) => A.toggleBranch(el.dataset.arg),
+  deleteBranch: (el) => A.deleteBranch(el.dataset.arg),
+  openOrderFromBranch: (el) => setState({ modal: null, drawer: { k: 'order', id: el.dataset.arg } }),
 
   // مستخدمون وفروع
   openUserNew: () => setState({ modal: { k: 'userNew' } }),

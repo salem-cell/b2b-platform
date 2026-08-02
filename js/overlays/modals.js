@@ -5,9 +5,9 @@
 // ============================================================
 import { esc, ICONS } from '../core/dom.js';
 import { fmt, fmt0 } from '../core/format.js';
-import { chip, prodThumb, closeBtn, input, stepper } from '../ui.js';
-import { findOrder } from '../actions.js';
-import { FRANCHISEE_STATUS } from '../data/constants.js';
+import { chip, orderChip, prodThumb, closeBtn, input, stepper, mapSvgLarge, mapPinAt, pinIcon } from '../ui.js';
+import { findOrder, locFromPin, orderTotal } from '../actions.js';
+import { FRANCHISEE_STATUS, ROLES } from '../data/constants.js';
 import { PRODUCT_MAP, PRODUCTS } from '../data/products.js';
 import { showPricesFor } from '../pages/catalog.js';
 import { ticketChip } from '../pages/b2b.js';
@@ -271,17 +271,41 @@ function franchiseeModal(st) {
     </div>`;
 }
 
-// ---------- دعوة ممنوح ----------
+// ---------- إنشاء ممنوح (المانح يختار النوع: بيسك / سوبر بمنطقة امتياز) ----------
 function franchiseeInviteModal(st) {
-  const ready = st.frName.trim() && st.frCr.trim();
+  const showKinds = st.role === 'fr';
+  const isSuper = showKinds && st.frKind === 'super';
+  const ready = st.frName.trim() && st.frCr.trim() && (!isSuper || (st.frRegion || '').trim());
+  const kinds = [
+    { key: 'normal', name: 'ممنوح بيسك', sub: 'يفتح فروعًا لمنشأته فقط — بلا ممنوحين تابعين.' },
+    { key: 'super',  name: 'ممنوح سوبر', sub: 'يمنح ممنوحين ضمن منطقة امتياز محددة، وممنوحوه يفتحون فروعهم فقط.' },
+  ];
   return `
     <div style="padding:20px 22px 22px">
-      <div class="modal-title">دعوة ممنوح فرنشايز</div>
-      <div style="font-size:11px;color:var(--c-muted);margin-top:3px;line-height:1.8">يُنشأ حسابه ومحفظته المستقلة عند قبول الدعوة وتوثيق السجل التجاري.</div>
+      <div class="modal-title">إنشاء ممنوح فرنشايز</div>
+      <div style="font-size:11px;color:var(--c-muted);margin-top:3px;line-height:1.8">يُنشأ حسابه ومحفظته المستقلة فور توثيق السجل التجاري وتعميد B2B.</div>
       <div class="mt-14">${input('frName', st.frName, 'اسم المنشأة')}</div>
       <div class="mt-9">${input('frCr', st.frCr, 'رقم السجل التجاري', { dir: 'ltr' })}</div>
+      ${showKinds ? `
+        <div class="field-label" style="margin-top:13px">نوع الممنوح</div>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          ${kinds.map((k) => {
+            const on = st.frKind === k.key;
+            return `
+            <div class="flex-center gap-11" style="border:1.5px solid ${on ? 'var(--c-purple-border)' : 'var(--c-card-border)'};background:${on ? '#F7F5FB' : '#fff'};border-radius:13px;padding:11px 14px;cursor:pointer"
+              data-action="setFrKind" data-arg="${k.key}">
+              <div class="radio ${on ? 'on' : ''}" style="${on ? 'border-color:var(--c-purple)' : ''}"></div>
+              <div class="grow">
+                <div style="font-size:12.5px;font-weight:800">${k.name}</div>
+                <div style="font-size:10px;color:var(--c-muted);margin-top:2px;line-height:1.7">${k.sub}</div>
+              </div>
+            </div>`;
+          }).join('')}
+        </div>
+        ${isSuper ? `<div class="mt-9">${input('frRegion', st.frRegion, 'منطقة الامتياز — مثال: المنطقة الغربية', { extra: 'style="border-color:var(--c-purple-border);background:#F7F5FB"' })}</div>` : ''}
+      ` : ''}
       <div class="flex gap-9" style="margin-top:13px">
-        <button class="btn btn-primary grow ${ready ? '' : 'disabled'}" data-action="sendInvite">إرسال الدعوة</button>
+        <button class="btn btn-primary grow ${ready ? '' : 'disabled'}" data-action="sendInvite">إنشاء الممنوح</button>
         <button class="btn btn-ghost" style="width:110px;font-size:12.5px" data-action="closeAll">إلغاء</button>
       </div>
     </div>`;
@@ -418,8 +442,146 @@ function userEditModal(st) {
     </div>`;
 }
 
+// ---------- تفاصيل الفرع (خريطة + إحصائيات + طلبات + فريق + إيقاف/حذف) ----------
+function branchDetailModal(st) {
+  const b = st.branches.find((x) => x.name === st.brDetName) || { name: '', city: '' };
+  const branchOrders = st.orders.filter((o) => o.branch === b.name);
+  const team = st.users.filter((u) => u.branch === b.name || (u.branch || '').split(' · ').includes(b.name));
+  const supervisors = team.filter((u) => u.role !== 'worker');
+  const workers = team.filter((u) => u.role === 'worker');
+  const roleChip = { owner: ['المالك', 'chip-purple'], ops: ['مشرف — مدير عمليات', 'chip-info'], fin: ['مشرف — مالية', 'chip-blue'], worker: ['عامل', 'chip-gray'] };
+  const off = b.st === 'off';
+
+  return `
+    <div style="padding:20px 22px 22px;overflow-y:auto;min-height:0">
+      <div class="flex-center gap-10">
+        <div style="width:40px;height:40px;border-radius:12px;background:var(--c-purple-soft);display:flex;align-items:center;justify-content:center">${ICONS.branch('#654e92', 18)}</div>
+        <div class="grow">
+          <div class="modal-title">${esc(b.name)}</div>
+          <div style="font-size:10.5px;color:var(--c-muted);margin-top:1px">${esc(ROLES[st.role].org)} · ${esc(b.city)}</div>
+        </div>
+        ${closeBtn()}
+      </div>
+      ${b.loc ? `
+        <div class="clickable" title="اضغط لعرض الموقع على الخريطة" style="position:relative;height:150px;border-radius:13px;overflow:hidden;margin-top:14px;border:1px solid var(--c-card-border);cursor:pointer" data-action="openMapView" data-arg="${esc(b.name)}">
+          ${mapSvgLarge()}
+          ${mapPinAt(b.loc.x, b.loc.y, 30)}
+        </div>
+        <div class="flex-center gap-7 mt-9" style="cursor:pointer" data-action="openMapView" data-arg="${esc(b.name)}">
+          ${pinIcon('#654e92', 13)}
+          <div style="font-size:11.5px;font-weight:800">${esc(b.loc.addr)}</div>
+          <div class="num" style="font-size:10px;color:var(--c-faint)">${esc(b.loc.coords)}</div>
+          <div class="grow"></div>
+          <div style="font-size:10px;font-weight:800;color:var(--c-info)">عرض على الخريطة ←</div>
+        </div>`
+      : '<div class="banner banner-warn mt-14" style="border-radius:12px;padding:11px 13px;font-size:11px;font-weight:800">لم يُحدد موقع هذا الفرع بعد.</div>'}
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:9px;margin-top:14px">
+        <div style="background:var(--c-chip-bg);border-radius:12px;padding:11px 13px"><div class="num" style="font-size:17px;font-weight:700;color:var(--c-purple)">${branchOrders.length}</div><div style="font-size:9.5px;font-weight:800;color:var(--c-muted);margin-top:1px">طلبات الفرع</div></div>
+        <div style="background:var(--c-chip-bg);border-radius:12px;padding:11px 13px"><div class="num" style="font-size:17px;font-weight:700;color:var(--c-info)">${supervisors.length}</div><div style="font-size:9.5px;font-weight:800;color:var(--c-muted);margin-top:1px">مشرفون</div></div>
+        <div style="background:var(--c-chip-bg);border-radius:12px;padding:11px 13px"><div class="num" style="font-size:17px;font-weight:700;color:var(--c-blue)">${workers.length}</div><div style="font-size:9.5px;font-weight:800;color:var(--c-muted);margin-top:1px">عمال</div></div>
+      </div>
+      <div class="field-label">طلبات الفرع</div>
+      <div style="border:1px solid var(--c-divider);border-radius:13px;overflow:hidden;max-height:170px;overflow-y:auto">
+        ${branchOrders.map((o) => `
+          <div class="flex-center gap-9 clickable" style="padding:10px 13px;border-bottom:1px solid #F7F5FA;cursor:pointer" data-action="openOrderFromBranch" data-arg="${o.id}">
+            <div class="num" style="font-size:11.5px;font-weight:700">${o.id}</div>
+            <div style="font-size:10px;color:var(--c-faint)">${esc(o.date)}</div>
+            <div class="grow"></div>
+            <div class="num" style="font-size:11px;font-weight:700">${fmt(orderTotal(o))} <span style="font-size:8.5px;font-family:var(--font-ar);color:var(--c-faint)">ر.س</span></div>
+            ${orderChip(o.st)}
+          </div>`).join('')}
+        ${branchOrders.length === 0 ? '<div style="padding:14px;font-size:11px;color:var(--c-faint);text-align:center">لا طلبات من هذا الفرع بعد.</div>' : ''}
+      </div>
+      <div class="field-label">الفريق</div>
+      <div style="display:flex;flex-direction:column;gap:6px">
+        ${[...supervisors, ...workers].map((u) => {
+          const rc = roleChip[u.role] || roleChip.worker;
+          return `
+          <div class="flex-center gap-9" style="background:var(--c-subtle);border:1px solid var(--c-divider);border-radius:11px;padding:8px 12px">
+            <div style="width:28px;height:28px;border-radius:999px;background:var(--c-purple-soft);color:var(--c-purple);font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center">${esc((u.name || ' ').trim()[0])}</div>
+            <div class="grow" style="font-size:11.5px;font-weight:800">${esc(u.name)}</div>
+            ${chip(rc[0], rc[1])}
+          </div>`;
+        }).join('')}
+        ${team.length === 0 ? '<div style="padding:10px;font-size:11px;color:var(--c-faint);text-align:center">لا مستخدمون مرتبطون بهذا الفرع — اربطهم من اليوزرات والصلاحيات.</div>' : ''}
+      </div>
+      <div class="flex gap-9" style="margin-top:16px;padding-top:14px;border-top:1px solid var(--c-divider)">
+        <button class="btn btn-warn-outline grow" style="height:44px;border-radius:12px;font-size:12px" data-action="toggleBranch" data-arg="${esc(b.name)}">${off ? 'إعادة تفعيل الفرع' : 'إيقاف الفرع مؤقتًا'}</button>
+        <button class="btn btn-danger-outline grow" style="height:44px;border-radius:12px;font-size:12px" data-action="deleteBranch" data-arg="${esc(b.name)}">حذف الفرع</button>
+      </div>
+      <div style="font-size:9.5px;color:var(--c-faint);margin-top:7px;line-height:1.8">الإيقاف يمنع الطلب من الفرع مؤقتًا مع بقاء سجلّه · الحذف نهائي ولا يمس الطلبات السابقة.</div>
+    </div>`;
+}
+
+// ---------- عرض موقع الفرع ----------
+function mapViewModal(st) {
+  const mv = st.mapView || {};
+  return `
+    <div style="padding:20px 22px 22px;overflow-y:auto;min-height:0">
+      <div class="flex-center gap-8">
+        <div class="modal-title">موقع ${esc(mv.name || '')}</div>
+        <div class="chip chip-success" style="gap:5px;font-size:9.5px">خرائط Google</div>
+        <div class="grow"></div>
+        ${closeBtn()}
+      </div>
+      <div style="position:relative;height:300px;border-radius:14px;overflow:hidden;margin-top:12px;border:1px solid var(--c-card-border)">
+        ${mapSvgLarge()}
+        ${mapPinAt(mv.x || 0, mv.y || 0, 36)}
+      </div>
+      <div class="flex-center gap-9" style="background:var(--c-chip-bg);border-radius:12px;padding:11px 13px;margin-top:10px">
+        ${pinIcon('#654e92', 16)}
+        <div class="grow">
+          <div style="font-size:12px;font-weight:800">${esc(mv.addr || '')}</div>
+          <div class="num" style="font-size:10px;color:var(--c-muted);margin-top:1px">${esc(mv.coords || '')}</div>
+        </div>
+        <button class="btn btn-primary btn-sm" data-action="backToBranchDet" data-arg="${esc(mv.name || '')}">رجوع للتفاصيل</button>
+      </div>
+    </div>`;
+}
+
+// ---------- اختيار موقع الفرع من الخريطة (الموقع إلزامي) ----------
+function mapPickModal(st) {
+  const pin = st.mapPin;
+  const loc = pin ? locFromPin(pin) : null;
+  return `
+    <div style="padding:20px 22px 22px;overflow-y:auto;min-height:0">
+      <div class="flex-center gap-8">
+        <div class="modal-title">حدد موقع الفرع</div>
+        <div class="chip chip-success" style="gap:5px;font-size:9.5px">${pinIcon('#1d7a3e', 10)} خرائط Google</div>
+      </div>
+      <div style="font-size:11px;color:var(--c-muted);margin-top:3px;line-height:1.8">انقر على الخريطة لإسقاط الدبوس على موقع الفرع بدقة.</div>
+      <div class="flex-center gap-8" style="height:44px;border:1.5px solid var(--c-card-border);border-radius:12px;background:#fff;padding:0 12px;margin-top:12px;box-shadow:0 2px 8px rgba(38,36,51,.06)">
+        ${ICONS.search('#a8a4b8', 15)}
+        <input data-input="mapSearch" data-key="mapSearch" value="${esc(st.mapSearch)}" placeholder="ابحث عن حي أو شارع… (مثال: العليا)" style="flex:1;border:none;outline:none;font-size:12px;background:transparent">
+      </div>
+      <div id="map-pick-canvas" style="position:relative;height:300px;border-radius:14px;overflow:hidden;margin-top:10px;cursor:crosshair;border:1px solid var(--c-card-border);background:#E8EAED" data-action="mapClick">
+        ${mapSvgLarge()}
+        ${pin ? mapPinAt(pin.x, pin.y, 34) : ''}
+        <div style="position:absolute;left:10px;bottom:10px;display:flex;flex-direction:column;background:#fff;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,.18);overflow:hidden">
+          <div style="width:32px;height:32px;display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:700;color:#5f6368;border-bottom:1px solid #eee">+</div>
+          <div style="width:32px;height:32px;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:700;color:#5f6368">−</div>
+        </div>
+      </div>
+      ${loc ? `
+        <div class="flex-center gap-9" style="background:var(--c-chip-bg);border-radius:12px;padding:11px 13px;margin-top:10px">
+          ${pinIcon('#654e92', 16)}
+          <div class="grow">
+            <div style="font-size:12px;font-weight:800">${esc(loc.addr)}</div>
+            <div class="num" style="font-size:10px;color:var(--c-muted);margin-top:1px">${esc(loc.coords)}</div>
+          </div>
+        </div>` : ''}
+      <div class="flex gap-9" style="margin-top:13px">
+        <button class="btn btn-primary grow ${pin ? '' : 'disabled'}" data-action="confirmMapPick">تأكيد الموقع</button>
+        <button class="btn btn-ghost" style="padding:0 18px;font-size:12px" data-action="closeAll">إلغاء</button>
+      </div>
+    </div>`;
+}
+
 const MODALS = {
   cart: cartModal,
+  brDet: branchDetailModal,
+  mapView: mapViewModal,
+  mapPick: mapPickModal,
   approve: approveModal,
   reject: reasonModal,
   hold: reasonModal,

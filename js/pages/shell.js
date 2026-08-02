@@ -8,9 +8,10 @@ import { BASE_NOTIFS } from '../data/seed.js';
 
 /** عنوان الصفحة الحالي حسب الدور */
 export function pageTitle(st) {
-  if (st.page === 'clientdet') return st.role === 'fr' ? 'ملف الممنوح' : 'ملف العميل';
+  const frRole = st.role === 'fr' || st.role === 'frzs';
+  if (st.page === 'clientdet') return frRole ? 'ملف الممنوح' : 'ملف العميل';
   if (st.role === 'b2b' && st.page === 'wallet') return 'محافظ العملاء';
-  if (st.role === 'fr' && FR_PAGE_LABELS[st.page]) return FR_PAGE_LABELS[st.page];
+  if (frRole && FR_PAGE_LABELS[st.page]) return FR_PAGE_LABELS[st.page];
   return (PAGES[st.page] || {}).label || '';
 }
 
@@ -35,7 +36,7 @@ function renderSidebar(st) {
   const R = ROLES[st.role];
   const items = R.nav.map((key) => {
     const page = { ...PAGES[key] };
-    if (st.role === 'fr' && FR_PAGE_LABELS[key]) page.label = FR_PAGE_LABELS[key];
+    if ((st.role === 'fr' || st.role === 'frzs') && FR_PAGE_LABELS[key]) page.label = FR_PAGE_LABELS[key];
     if (st.role === 'b2b' && key === 'wallet') page.label = 'محافظ العملاء';
     const active = st.page === key;
     const badge = navBadge(st, key);
@@ -116,8 +117,10 @@ function renderTopbar(st) {
 /** بانر إيقاف المنشأة */
 function suspensionBanner(st) {
   const clientRoles = ['worker', 'ops', 'owner', 'fin'];
+  const superClient = st.clients.find((c) => c.id === 6);
   const suspended = (clientRoles.includes(st.role) && st.clients[0].st === 'susp')
-    || (st.role === 'frz' && st.clients[1].st === 'susp');
+    || (st.role === 'frz' && st.clients[1].st === 'susp')
+    || (st.role === 'frzs' && superClient && superClient.st === 'susp');
   if (!suspended) return '';
   return `
     <div class="banner banner-danger" style="border-width:1.5px;border-radius:16px;padding:14px 18px;margin-bottom:18px">

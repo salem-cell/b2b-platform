@@ -4,7 +4,7 @@
 // ============================================================
 import { getState, setState } from './core/store.js';
 import { fmt, fmt0, now, VAT } from './core/format.js';
-import { ROLES } from './data/constants.js';
+import { ROLES, SUPER_FR_ID } from './data/constants.js';
 import { PRODUCT_MAP, PRODUCTS } from './data/products.js';
 
 let toastTimer = null;
@@ -68,11 +68,16 @@ export function addCart(pid, delta) {
   setState({ cart });
 }
 
+/** عميل الجلسة الحالية (منشأة المستخدم) */
+export function sessionClientId(role) {
+  return role === 'frz' ? 2 : role === 'frzs' ? 6 : 1;
+}
+
 export function submitOrder() {
   const st = getState();
   const items = Object.keys(st.cart).map((pid) => ({ pid, qty: st.cart[pid] }));
   if (!items.length) { say('السلة فارغة'); return; }
-  const client = st.clients.find((c) => c.id === (st.role === 'frz' ? 2 : 1));
+  const client = st.clients.find((c) => c.id === sessionClientId(st.role));
   if (client && client.st === 'susp') { say('حساب منشأتك موقوف — لا يمكن إرسال طلبات'); return; }
   const order = {
     id: `ORD-${st.orderSeq}`, by: ROLES[st.role].user, branch: 'فرع العليا',
@@ -325,7 +330,7 @@ export function submitRequest() {
   if (!(st.reqName || '').trim()) { say('اكتب اسم المنتج المطلوب أولًا'); return; }
   const req = {
     id: `REQ-${st.reqSeq}`, name: st.reqName.trim(), unit: (st.reqUnit || '').trim(),
-    by: st.role === 'fr' ? 'مجموعة السالم — المانح' : 'مطاعم البلدة',
+    by: st.role === 'fr' ? 'دوار السعادة — المانح' : 'مطاعم البلدة',
     user: ROLES[st.role].user, note: (st.reqNote || '').trim() || '—', date: 'الآن', st: 'pend',
   };
   setState({ prodReqs: [req, ...st.prodReqs], reqSeq: st.reqSeq + 1, modal: null, reqName: '', reqUnit: '', reqNote: '' });
@@ -351,13 +356,39 @@ export function rejectRequest(id) {
 export function sendInvite() {
   const st = getState();
   if (!st.frName.trim() || !st.frCr.trim()) { say('أدخل اسم المنشأة ورقم السجل التجاري'); return; }
+  const isSuper = st.role === 'fr' && st.frKind === 'super';
+  if (isSuper && !(st.frRegion || '').trim()) { say('حدد منطقة امتياز الممنوح السوبر'); return; }
   const name = st.frName.trim(), cr = st.frCr.trim(), id = Date.now();
+  const city = st.role === 'frzs' ? 'المنطقة الشرقية' : isSuper ? st.frRegion.trim() : '—';
   setState({
-    frs: [...st.frs, { id, name, city: '—', cr, orders: 0, spend: 0, pay: 0, st: 'new', bal: 0, active: true }],
+    frs: [...st.frs, {
+      id, name, city, cr, orders: 0, spend: 0, pay: 0, st: 'new', bal: 0, active: true,
+      parent: st.role === 'frzs' ? SUPER_FR_ID : undefined,
+      super: isSuper || undefined,
+      region: isSuper ? st.frRegion.trim() : undefined,
+    }],
     clients: [...st.clients, { id, name, cr, city: '—', orders: 0, spend: 0, st: 'ok', bal: 0, limit: 20000, used: 0, wst: 'ok', branches: [], staff: [] }],
-    modal: null, frName: '', frCr: '',
+    modal: null, frName: '', frCr: '', frKind: 'normal', frRegion: '',
   });
-  say('أُرسلت الدعوة — تعميد الممنوح وتفعيله بيد B2B أدمن');
+  say(isSuper
+    ? `أُنشئ ممنوح سوبر لمنطقة «${st.frRegion.trim()}» — تعميده وتفعيله بيد B2B أدمن`
+    : 'أُنشئ الممنوح — تعميده وتفعيله بيد B2B أدمن');
+}
+
+/** إنشاء ممنوح تابع من داخل ملف الممنوح السوبر (لدى B2B أو المانح) */
+export function addSubFranchisee() {
+  const st = getState();
+  const client = st.clients.find((x) => x.id === st.clientSel);
+  const frEntry = st.frs.find((f) => f.name === client.name);
+  const name = (st.clSubName || '').trim(), cr = (st.clSubCr || '').trim();
+  if (!name || !cr) { say('أدخل اسم منشأة الممنوح التابع ورقم سجله التجاري'); return; }
+  const id = Date.now();
+  setState({
+    frs: [...st.frs, { id, name, city: frEntry.region || '—', cr, orders: 0, spend: 0, pay: 0, st: 'new', bal: 0, active: true, parent: frEntry.id }],
+    clients: [...st.clients, { id, name, cr, city: frEntry.region || '—', orders: 0, spend: 0, st: 'ok', bal: 0, limit: 20000, used: 0, wst: 'ok', branches: [], staff: [] }],
+    clSubName: '', clSubCr: '',
+  });
+  say(`أُنشئ الممنوح التابع «${name}» ضمن ${frEntry.region || 'منطقة السوبر'} — تعميده وتفعيله بيد B2B أدمن`);
 }
 
 export function approveFranchisee(id) {
@@ -391,8 +422,40 @@ export function toggleClientWallet(id) {
   say(frozen ? `فُك تجميد محفظة ${c.name}` : `جُمّدت محفظة ${c.name} — لا شحن ولا صرف حتى فك التجميد`);
 }
 
-export function openClientProfile(id, walletView = false) {
-  setState({ page: 'clientdet', clientSel: id, clWalletOpen: walletView, drawer: null, modal: null });
+export function openClientProfile(id, walletView = false, prev = null) {
+  setState({ page: 'clientdet', clientSel: id, clientPrev: prev, clWalletOpen: walletView, drawer: null, modal: null });
+}
+
+/** رجوع من ملف العميل: لملف السوبر الأب إن وُجد، وإلا لقائمة العملاء/الممنوحين */
+export function backFromClientProfile() {
+  const st = getState();
+  if (st.clientPrev) {
+    setState({ clientSel: st.clientPrev, clientPrev: null, clWalletOpen: false });
+    return;
+  }
+  go((st.role === 'fr' || st.role === 'frzs') ? 'frs' : 'clients');
+}
+
+/** شبكة الفرنشايز حسب دور الجلسة:
+ *  myFrs: من يظهر في «إدارة الممنوحين» — المانح: المستوى الأعلى فقط؛ السوبر: تابعوه؛ B2B: الكل.
+ *  netFrs: من يدخل في التحليلات — المانح: الشبكة كاملة؛ غيره مثل myFrs. */
+export function franchiseScope(st) {
+  const myFrs = st.role === 'frzs'
+    ? st.frs.filter((f) => f.parent === SUPER_FR_ID)
+    : st.role === 'fr'
+      ? st.frs.filter((f) => !f.parent)
+      : st.frs;
+  const netFrs = st.role === 'fr' ? st.frs : myFrs;
+  return { myFrs, netFrs };
+}
+
+/** تسمية الممنوح في القوائم التحليلية (يُظهر التبعية أو صفة السوبر) */
+export function frTag(st, f) {
+  if (f.parent) {
+    const parent = st.frs.find((x) => x.id === f.parent);
+    return `${f.name} — تابع لـ ${parent ? parent.name : ''}`;
+  }
+  return f.super ? `${f.name} — سوبر` : f.name;
 }
 
 /** تعديل عميل داخل ملفه (فروع/فريق) */
@@ -448,8 +511,54 @@ export function saveUserEdit() {
 export function addBranch() {
   const st = getState();
   if (!(st.brName || '').trim()) { say('اكتب اسم الفرع أولًا'); return; }
-  setState({ branches: [...st.branches, { name: st.brName.trim(), city: 'الرياض' }], brName: '' });
-  say('أُضيف الفرع — اربط به المستخدمين من جدول الفريق');
+  if (!st.brLoc) {
+    say('حدد موقع الفرع على الخريطة أولًا — الموقع إلزامي');
+    setState({ modal: { k: 'mapPick' }, mapTarget: 'br', mapPin: null, mapSearch: '' });
+    return;
+  }
+  setState({ branches: [...st.branches, { name: st.brName.trim(), city: 'الرياض', loc: st.brLoc }], brName: '', brLoc: null });
+  say('أُضيف الفرع بموقعه — اربط به المستخدمين من جدول الفريق');
+}
+
+// ---------- الخرائط ومواقع الفروع ----------
+
+/** اسم الحي التقريبي من إحداثيات الخريطة (محاكاة geocoding) */
+export function mapDistrict(x, y) {
+  if (y < 30) return x < 45 ? 'حي النرجس' : 'حي الياسمين';
+  if (y < 73) return x < 30 ? 'حي السليمانية' : x < 70 ? 'حي العليا' : 'حي الملز';
+  return x < 50 ? 'حي الروضة' : 'حي المروج';
+}
+
+/** كائن موقع كامل من دبوس الخريطة */
+export function locFromPin(pin) {
+  return {
+    x: pin.x, y: pin.y,
+    addr: `${mapDistrict(pin.x, pin.y)}، الرياض`,
+    coords: `${(24.60 + pin.y * 0.0021).toFixed(4)}°N, ${(46.60 + pin.x * 0.0028).toFixed(4)}°E`,
+  };
+}
+
+export function confirmMapPick() {
+  const st = getState();
+  if (!st.mapPin) { say('انقر على الخريطة لإسقاط الدبوس أولًا'); return; }
+  const loc = locFromPin(st.mapPin);
+  setState(st.mapTarget === 'cl' ? { clBrLoc: loc, modal: null } : { brLoc: loc, modal: null });
+  say('تم تثبيت موقع الفرع — أكمل الإضافة');
+}
+
+export function toggleBranch(name) {
+  const st = getState();
+  const b = st.branches.find((x) => x.name === name);
+  const off = b.st === 'off';
+  setState({ branches: st.branches.map((x) => (x.name === name ? { ...x, st: off ? 'ok' : 'off' } : x)) });
+  say(off
+    ? `أُعيد تفعيل ${name} — يستطيع الطلب من جديد`
+    : `أُوقف ${name} مؤقتًا — لن تُقبل طلبات جديدة منه`);
+}
+
+export function deleteBranch(name) {
+  setState({ branches: getState().branches.filter((x) => x.name !== name), modal: null });
+  say(`حُذف ${name} نهائيًا — طلباته السابقة باقية في السجل`);
 }
 
 // ---------- الإشعارات ----------

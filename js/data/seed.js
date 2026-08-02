@@ -32,6 +32,11 @@ export const BASE_NOTIFS = {
     { c: 'اعتمادات', text: 'ORD-2476 بانتظار تعميدك النهائي', t: 'أمس' },
     { c: 'مالية',    text: 'حدّث المانح قائمة أسعار الفرنشايز — سرت على الطلبات الجديدة', t: 'اليوم' },
   ],
+  frzs: [
+    { c: 'اعتمادات', text: 'ORD-2476 بانتظار تعميدك النهائي', t: 'أمس' },
+    { c: 'طلبات',    text: 'انخفضت طلبات ممنوحك «كرسبر برجر» 38% هذا الأسبوع', t: 'اليوم' },
+    { c: 'مالية',    text: 'حدّث المانح الرئيسي قائمة الأسعار — سرت عليك وعلى ممنوحيك', t: 'أمس' },
+  ],
   fr: [
     { c: 'مالية', text: 'تأخر سداد بروست الخليج 12 يومًا — 9,200 ر.س', t: 'اليوم' },
     { c: 'طلبات', text: 'ارتفعت طلبات الريف الشمالي 12% هذا الأسبوع', t: 'أمس' },
@@ -64,12 +69,20 @@ export function createInitialState() {
     approveQty: null, recv: null,
     rejectText: '', holdText: '', tHoldText: '',
     topupAmt: 2500, topupMethod: 'مدى',
-    frSel: null, frName: '', frCr: '',
+    frSel: null, frName: '', frCr: '', frKind: 'normal', frRegion: '',
     lists: SAVED_LISTS, lnName: '', lnQty: {}, lnSearch: '',
     reqName: '', reqUnit: '', reqNote: '', reqSearch: '', reqCat: 'الكل',
     usName: '', usEmail: '', usPass: '', usRole: 'worker', usBranches: [], brName: '',
     ueRole: null, ueBranches: [],
-    clientSel: null, clWalletOpen: false, clStaffName: '', clStaffRole: 'worker', clBrName: '',
+    clientSel: null, clientPrev: null, clWalletOpen: false, clStaffName: '', clStaffRole: 'worker', clBrName: '',
+    clSubName: '', clSubCr: '', clBrLoc: null,
+
+    // الخرائط وتفاصيل الفروع
+    brLoc: null,            // موقع الفرع الجديد المُثبّت (صفحة إدارة الفروع)
+    mapPin: null,           // الدبوس الحالي في نافذة اختيار الموقع {x,y}
+    mapSearch: '', mapTarget: null,   // br | cl
+    mapView: null,          // {name,x,y,addr,coords} لنافذة عرض الموقع
+    brDetName: null,        // اسم الفرع المفتوح في نافذة التفاصيل
 
     // الطلبات
     orders: [
@@ -115,12 +128,13 @@ export function createInitialState() {
       { id: 'CN-1102',  ref: 'نواقص ORD-2452', due: 'إشعار دائن',        amt: -320,     rem: 0,      st: 'credit' },
     ],
 
-    // شبكة الفرنشايز
+    // شبكة الفرنشايز — parent: تابع لممنوح سوبر، super/region: ممنوح سوبر بمنطقة امتياز
     frs: [
       { id: 1, name: 'مطاعم الريف الشمالي', city: 'الرياض', cr: '4030-102211', orders: 41, spend: 486200, pay: 96,  st: 'ok',   bal: 22400, active: true },
       { id: 2, name: 'بروست الخليج',        city: 'جدة',    cr: '4030-118563', orders: 34, spend: 412500, pay: 71,  st: 'late', bal: 9200,  active: true },
-      { id: 3, name: 'شاورما البلد',        city: 'الدمام', cr: '4030-125770', orders: 26, spend: 301800, pay: 88,  st: 'ok',   bal: 14750, active: true },
-      { id: 4, name: 'كرسبر برجر',          city: 'الخبر',  cr: '4030-131208', orders: 9,  spend: 96400,  pay: 100, st: 'new',  bal: 3000,  active: true },
+      { id: 3, name: 'شاورما البلد',        city: 'الدمام', cr: '4030-125770', orders: 26, spend: 301800, pay: 88,  st: 'ok',   bal: 14750, active: true, parent: 5 },
+      { id: 4, name: 'كرسبر برجر',          city: 'الخبر',  cr: '4030-131208', orders: 9,  spend: 96400,  pay: 100, st: 'new',  bal: 3000,  active: true, parent: 5 },
+      { id: 5, name: 'الشرقية للفرنشايز',   city: 'الدمام', cr: '4030-140552', orders: 18, spend: 214600, pay: 94,  st: 'ok',   bal: 48250, active: true, super: true, region: 'المنطقة الشرقية' },
     ],
 
     // تذاكر النواقص
@@ -176,6 +190,13 @@ export function createInitialState() {
           { name: 'بدر الجبرين',   role: 'owner',  branch: 'الإدارة' },
           { name: 'راكان السبيعي', role: 'worker', branch: 'فرع العقربية' },
         ] },
+      { id: 6, name: 'الشرقية للفرنشايز', cr: '4030-140552', city: 'الدمام', orders: 18, spend: 214600, st: 'ok', bal: 48250, limit: 100000, used: 36500, wst: 'ok',
+        branches: [{ name: 'فرع الكورنيش', city: 'الدمام' }, { name: 'فرع الظهران مول', city: 'الظهران' }],
+        staff: [
+          { name: 'م. فيصل الدوسري', role: 'owner',  branch: 'الإدارة' },
+          { name: 'نايف العتيق',     role: 'ops',    branch: 'فرع الكورنيش' },
+          { name: 'حمد الدخيل',      role: 'worker', branch: 'فرع الظهران مول' },
+        ] },
     ],
 
     // مستخدمو المنشأة الحالية
@@ -186,10 +207,11 @@ export function createInitialState() {
       { id: 4, name: 'أ. سارة الشمري', role: 'fin',   branch: 'الإدارة',     st: 'ok' },
       { id: 5, name: 'ماجد العنزي', email: 'majed@baldah.sa', role: 'worker', branch: 'فرع العليا', st: 'pend' },
     ],
+    // الفروع — لكل فرع موقع خريطة {x,y بالنسبة المئوية, العنوان, الإحداثيات}
     branches: [
-      { name: 'فرع العليا', city: 'الرياض' },
-      { name: 'فرع الروضة', city: 'الرياض' },
-      { name: 'فرع النسيم', city: 'الرياض' },
+      { name: 'فرع العليا', city: 'الرياض', loc: { x: 55, y: 50, addr: 'حي العليا، الرياض', coords: '24.7050°N, 46.7540°E' } },
+      { name: 'فرع الروضة', city: 'الرياض', loc: { x: 30, y: 85, addr: 'حي الروضة، الرياض', coords: '24.7785°N, 46.6840°E' } },
+      { name: 'فرع النسيم', city: 'الرياض', loc: { x: 80, y: 40, addr: 'حي الملز، الرياض', coords: '24.6840°N, 46.8240°E' } },
     ],
 
     notifUnread: 2,

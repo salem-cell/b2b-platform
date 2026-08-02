@@ -79,7 +79,7 @@ function drawerBanners(st, o) {
 function drawerActions(st, o) {
   const parts = [];
   const canApprove = (o.st === 'ops' && st.role === 'ops')
-    || (o.st === 'purch' && (st.role === 'owner' || st.role === 'frz'))
+    || (o.st === 'purch' && ['owner', 'frz', 'frzs'].includes(st.role))
     || ((o.st === 'ops' || o.st === 'purch') && st.role === 'b2b');
 
   if (canApprove) parts.push(`<button class="btn btn-primary btn-block mt-14" data-action="openApprove" data-arg="${o.id}">فتح شاشة التعميد</button>`);

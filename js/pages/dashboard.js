@@ -5,6 +5,8 @@
 import { esc } from '../core/dom.js';
 import { fmt, fmt0 } from '../core/format.js';
 import { orderChip } from '../ui.js';
+import { franchiseScope, frTag } from '../actions.js';
+import { ORG_CR, DEFAULT_CR } from '../data/constants.js';
 import { PRODUCTS } from '../data/products.js';
 
 function kpiCard(k) {
@@ -51,12 +53,24 @@ function buildKpis(st) {
       { v: dueInv.length, l: 'فواتير مستحقة', color: 'var(--c-warn)', go: 'wallet' },
       { v: fmt0(W.limit - W.used), u: 'ر.س', l: 'المتاح من الحد', color: 'var(--c-success)', go: 'wallet' },
     ];
-    case 'fr': return [
-      { v: fmt0(st.frs.reduce((s, f) => s + f.spend, 0)), u: 'ر.س', l: 'مشتريات الشبكة — يوليو', color: 'var(--c-purple)', go: 'analytics' },
-      { v: st.frs.reduce((s, f) => s + f.orders, 0), u: 'طلب', l: 'طلبات الممنوحين', color: 'var(--c-info)', go: 'analytics' },
-      { v: `${Math.round(st.frs.reduce((s, f) => s + f.pay, 0) / st.frs.length)}%`, l: 'الالتزام بالسداد', color: 'var(--c-success)', go: 'analytics' },
-      { v: st.frs.length, l: 'ممنوحون نشطون', color: 'var(--c-ink)', go: 'frs' },
-    ];
+    case 'frzs': {
+      const { myFrs } = franchiseScope(st);
+      return [
+        { v: purchPend.length, l: 'بانتظار تعميدك النهائي', color: 'var(--c-info)', go: 'approvals' },
+        { v: fmt0(W.bal), u: 'ر.س', l: 'رصيد محفظتك', color: 'var(--c-purple)', go: 'wallet' },
+        { v: fmt0(myFrs.reduce((s, f) => s + f.spend, 0)), u: 'ر.س', l: 'مشتريات ممنوحيك — يوليو', color: 'var(--c-blue)', go: 'analytics' },
+        { v: myFrs.length, l: 'ممنوحون في منطقتك', color: 'var(--c-ink)', go: 'frs' },
+      ];
+    }
+    case 'fr': {
+      const { netFrs } = franchiseScope(st);
+      return [
+        { v: fmt0(netFrs.reduce((s, f) => s + f.spend, 0)), u: 'ر.س', l: 'مشتريات الشبكة كاملة — يوليو', color: 'var(--c-purple)', go: 'analytics' },
+        { v: netFrs.reduce((s, f) => s + f.orders, 0), u: 'طلب', l: 'طلبات الشبكة', color: 'var(--c-info)', go: 'analytics' },
+        { v: `${Math.round(netFrs.reduce((s, f) => s + f.pay, 0) / Math.max(netFrs.length, 1))}%`, l: 'الالتزام بالسداد', color: 'var(--c-success)', go: 'analytics' },
+        { v: netFrs.length, l: 'ممنوحون — سوبر وبيسك وتابعون', color: 'var(--c-ink)', go: 'frs' },
+      ];
+    }
     default: return [ // b2b
       { v: b2bPrep.filter((o) => o.st === 'b2b').length, l: 'قيد التجهيز', color: 'var(--c-blue)', go: 'orders' },
       { v: b2bPrep.filter((o) => o.st === 'hold').length, l: 'طلبات معلقة', color: 'var(--c-warn)', go: 'orders' },
@@ -78,7 +92,7 @@ function taskBanner(st) {
     t = { title: `وصل الطلب ${shipPend[0].id} إلى الفرع`, sub: 'افحص البضاعة مقابل الفاتورة المعتمدة ثم أكّد الاستلام.', btn: 'بدء الاستلام', action: 'openReceive', arg: shipPend[0].id };
   } else if (st.role === 'ops' && opsPend[0]) {
     t = { title: `${opsPend.length} طلب بانتظار تعميدك`, sub: `راجع الكميات وعمّد أو ارفض بسبب — أقدمها ${opsPend[opsPend.length - 1].id}.`, btn: 'فتح التعميدات', action: 'go', arg: 'approvals' };
-  } else if ((st.role === 'owner' || st.role === 'frz') && purchPend[0]) {
+  } else if ((st.role === 'owner' || st.role === 'frz' || st.role === 'frzs') && purchPend[0]) {
     t = { title: `${purchPend[0].id} بانتظار تعميدك النهائي`, sub: 'بعد تعميدك يُرسل الطلب إلى B2B للتجهيز والتوصيل.', btn: 'فتح التعميد', action: 'openApprove', arg: purchPend[0].id };
   } else if (st.role === 'b2b' && b2bPrep[0]) {
     t = { title: `${b2bPrep.length} طلب في قائمة التجهيز`, sub: 'جهّز وأرسل للتوصيل — أو عدّل/علّق/ارفض من تفاصيل الطلب.', btn: 'فتح القائمة', action: 'go', arg: 'orders' };
@@ -110,11 +124,12 @@ function dashOrderRow(st, o) {
 function sideColumn(st) {
   const W = st.wallet;
   const parts = [];
+  const orgCr = ORG_CR[st.role] || DEFAULT_CR;
 
-  if (['owner', 'fin', 'frz', 'fr'].includes(st.role)) {
+  if (['owner', 'fin', 'frz', 'frzs', 'fr'].includes(st.role)) {
     parts.push(`
       <div class="grad-card" style="padding:18px 20px;cursor:pointer;border-radius:18px" data-action="goWallet">
-        <div class="flex-center"><div style="font-size:11px;font-weight:800;opacity:.85">رصيد المحفظة</div><div class="grow"></div><div class="num" style="font-size:10px;opacity:.75">C.R. 4030-118842</div></div>
+        <div class="flex-center"><div style="font-size:11px;font-weight:800;opacity:.85">رصيد المحفظة</div><div class="grow"></div><div class="num" style="font-size:10px;opacity:.75">C.R. ${orgCr}</div></div>
         <div class="num" style="font-size:26px;font-weight:700;margin-top:6px">${fmt(W.bal)} <span style="font-size:12px;font-family:var(--font-ar);font-weight:700;opacity:.8">ر.س</span></div>
         <div style="margin-top:11px;height:6px;border-radius:999px;background:rgba(255,255,255,.25);overflow:hidden"><div style="height:100%;background:#7DF0FF;width:${Math.round(W.used / W.limit * 100)}%"></div></div>
         <div style="font-size:10.5px;opacity:.85;margin-top:6px">الحد الائتماني: <span class="num">${fmt0(W.used)}</span> / <span class="num">${fmt0(W.limit)}</span></div>
@@ -137,30 +152,32 @@ function sideColumn(st) {
   if (st.role === 'b2b' && openTk.length) parts.push(alert(`${openTk.length} تذكرة نواقص بانتظار الحل`, 'red', 'go', 'tickets'));
   if (st.role === 'worker') parts.push(alert('الأسعار مخفية لدور العامل حسب سياسة المنشأة', 'amber'));
 
-  // مانح الفرنشايز: أشرطة مشتريات الممنوحين
-  if (st.role === 'fr') {
-    const maxSpend = Math.max(...st.frs.map((f) => f.spend), 1);
+  // مانح/سوبر: أشرطة مشتريات شبكته
+  if (st.role === 'fr' || st.role === 'frzs') {
+    const { netFrs } = franchiseScope(st);
+    const maxSpend = Math.max(...netFrs.map((f) => f.spend), 1);
     parts.push(`
       <div class="card card-pad">
         <div style="font-size:13px;font-weight:800;margin-bottom:12px">مشتريات الممنوحين — يوليو</div>
         <div style="display:flex;flex-direction:column;gap:11px">
-          ${st.frs.filter((f) => f.spend > 0).map((f) => `
+          ${netFrs.filter((f) => f.spend > 0).map((f) => `
             <div>
-              <div class="flex" style="font-size:11px;font-weight:700"><div>${esc(f.name)}</div><div class="grow"></div><div class="num" style="color:var(--c-muted)">${fmt0(f.spend)}</div></div>
+              <div class="flex" style="font-size:11px;font-weight:700"><div>${esc(frTag(st, f))}</div><div class="grow"></div><div class="num" style="color:var(--c-muted)">${fmt0(f.spend)}</div></div>
               <div class="progress" style="margin-top:5px"><div style="width:${Math.round(f.spend / maxSpend * 100)}%"></div></div>
             </div>`).join('')}
         </div>
       </div>`);
   }
 
-  // الممنوح: بطاقة الربط بالمانح
-  if (st.role === 'frz') {
+  // الممنوح (بيسك أو سوبر): بطاقة الربط بالمانح
+  if (st.role === 'frz' || st.role === 'frzs') {
     parts.push(`
       <div class="card flex-center gap-11" style="border-color:var(--c-info-border);padding:14px 16px">
         <img src="assets/logo-0.png" alt="" style="width:36px;height:36px;border-radius:10px;object-fit:contain;background:var(--c-chip-bg);padding:4px" onerror="this.style.display='none'">
         <div class="grow">
-          <div style="font-size:12px;font-weight:800;color:var(--c-purple)">مرتبط بالمانح: مجموعة السالم</div>
+          <div style="font-size:12px;font-weight:800;color:var(--c-purple)">مرتبط بالمانح: دوار السعادة</div>
           <div style="font-size:10px;line-height:1.7;color:var(--c-info);margin-top:2px">قائمة أسعار الفرنشايز مطبقة · محفظتك مستقلة — يطّلع المانح دون الصرف منها</div>
+          ${st.role === 'frzs' ? '<div style="font-size:10px;font-weight:800;line-height:1.7;color:var(--c-purple);margin-top:4px">منطقة امتيازك: المنطقة الشرقية — تمنح ممنوحين ضمنها فقط، وممنوحوك يفتحون فروعهم فقط</div>' : ''}
         </div>
       </div>`);
   }

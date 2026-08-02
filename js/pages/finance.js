@@ -4,7 +4,7 @@
 import { esc } from '../core/dom.js';
 import { fmt, fmt0 } from '../core/format.js';
 import { chip, filterChips, ledgerAmount } from '../ui.js';
-import { INVOICE_STATUS, INVOICE_FILTERS, CAN_PAY } from '../data/constants.js';
+import { INVOICE_STATUS, INVOICE_FILTERS, CAN_PAY, ORG_CR, DEFAULT_CR } from '../data/constants.js';
 
 function ledgerRows(list, pad = '13px 18px') {
   return list.map((h) => `
@@ -21,11 +21,12 @@ function ledgerRows(list, pad = '13px 18px') {
 function renderWalletSeg(st) {
   const W = st.wallet;
   const crPct = Math.round(W.used / W.limit * 100);
+  const orgCr = ORG_CR[st.role] || DEFAULT_CR;
   return `
     <div style="display:grid;grid-template-columns:1fr 1.3fr;gap:14px;align-items:start">
       <div style="display:flex;flex-direction:column;gap:14px">
         <div class="grad-card" style="padding:20px 22px">
-          <div class="flex-center"><div style="font-size:11px;font-weight:800;opacity:.85">رصيد المحفظة</div><div class="grow"></div><div class="num" style="font-size:10px;opacity:.75">C.R. 4030-118842</div></div>
+          <div class="flex-center"><div style="font-size:11px;font-weight:800;opacity:.85">رصيد المحفظة</div><div class="grow"></div><div class="num" style="font-size:10px;opacity:.75">C.R. ${orgCr}</div></div>
           <div class="num" style="font-size:32px;font-weight:700;margin-top:8px">${fmt(W.bal)} <span style="font-size:13px;font-family:var(--font-ar);font-weight:700;opacity:.8">ر.س</span></div>
           <div style="font-size:10.5px;opacity:.8;margin-top:2px">المحفظة تتبع السجل التجاري وتعمل على فروع منشأتك فقط.</div>
           <div class="flex gap-8 mt-16">

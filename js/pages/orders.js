@@ -11,7 +11,7 @@ import { showPricesFor } from './catalog.js';
 /** زر الإجراء المضمّن حسب الدور وحالة الطلب */
 export function rowAction(st, o) {
   if (st.role === 'ops' && o.st === 'ops')                          return { label: 'فتح التعميد',      action: 'openApprove', arg: o.id };
-  if ((st.role === 'owner' || st.role === 'frz') && o.st === 'purch') return { label: 'التعميد النهائي', action: 'openApprove', arg: o.id };
+  if (['owner', 'frz', 'frzs'].includes(st.role) && o.st === 'purch') return { label: 'التعميد النهائي', action: 'openApprove', arg: o.id };
   if (st.role === 'worker' && o.st === 'ship')                      return { label: 'بدء الاستلام',     action: 'openReceive', arg: o.id };
   if (st.role === 'b2b' && o.st === 'b2b')                          return { label: 'إرسال للتوصيل',    action: 'b2bAdvance',  arg: o.id };
   if (st.role === 'b2b' && o.st === 'hold')                         return { label: 'استئناف التجهيز',  action: 'resumeOrder', arg: o.id };

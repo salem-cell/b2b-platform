@@ -3,8 +3,8 @@
 // ============================================================
 import { esc, ICONS } from '../core/dom.js';
 import { fmt, fmt0 } from '../core/format.js';
-import { chip, input, ledgerAmount, emptyState } from '../ui.js';
-import { ROLES, STAFF_ROLE_LABEL, STAFF_ROLE_CHIP, INVOICE_STATUS } from '../data/constants.js';
+import { chip, input, ledgerAmount, emptyState, mapSvgSmall, mapPinAt, pinIcon } from '../ui.js';
+import { ROLES, STAFF_ROLE_LABEL, STAFF_ROLE_CHIP, INVOICE_STATUS, FRANCHISEE_STATUS } from '../data/constants.js';
 
 // ---------- اليوزرات والصلاحيات ----------
 export function renderUsers(st) {
@@ -45,23 +45,77 @@ export function renderUsers(st) {
     </div>`;
 }
 
-// ---------- إدارة الفروع ----------
-export function renderBranches(st) {
+// ---------- إدارة الفروع (اسم + موقع خريطة إلزامي، بطاقات بخرائط مصغرة) ----------
+
+/** زر تحديد الموقع (يظهر حالته: بلا موقع / موقع مثبّت) */
+function locPickButton(loc, action) {
+  const has = !!loc;
+  const color = has ? 'var(--c-success)' : 'var(--c-muted)';
+  const border = has ? 'var(--c-success-border)' : '#D8D4E2';
   return `
-    <div class="card" style="overflow:hidden;max-width:560px">
-      <div class="card-title" style="padding:14px 18px 10px">الفروع</div>
-      ${st.branches.map((b) => `
-        <div class="flex-center gap-10" style="padding:12px 18px;border-top:1px solid var(--c-divider)">
-          <div style="width:34px;height:34px;border-radius:10px;background:var(--c-purple-soft);display:flex;align-items:center;justify-content:center">${ICONS.branch()}</div>
-          <div class="grow">
-            <div style="font-size:12px;font-weight:800">${esc(b.name)}</div>
-            <div style="font-size:10px;color:var(--c-faint);margin-top:1px">${esc(b.city)}</div>
+    <div style="flex:1.6;min-width:280px;height:48px;border-radius:13px;border:1.5px dashed ${border};background:var(--c-subtle);display:flex;align-items:center;gap:9px;padding:0 14px;cursor:pointer" data-action="${action}">
+      ${pinIcon(has ? '#1d7a3e' : '#7d7990', 16)}
+      <div class="grow" style="font-size:12px;font-weight:800;color:${color};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${has ? `${esc(loc.addr)} · ${esc(loc.coords)}` : 'موقع الفرع على الخريطة (إلزامي)'}</div>
+      <div style="font-size:10.5px;font-weight:800;color:var(--c-info);white-space:nowrap">${has ? 'تغيير الموقع' : 'فتح الخريطة'}</div>
+    </div>`;
+}
+
+export function renderBranches(st) {
+  const ready = (st.brName || '').trim() && st.brLoc;
+
+  const cards = st.branches.map((b) => {
+    const ordCount = st.orders.filter((o) => o.branch === b.name).length;
+    const teamCount = st.users.filter((u) => u.branch === b.name || (u.branch || '').split(' · ').includes(b.name)).length;
+    const off = b.st === 'off';
+    return `
+      <div class="clickable" style="background:#fff;border:1px solid #EFEDF4;border-radius:16px;overflow:hidden;cursor:pointer;box-shadow:0 2px 10px rgba(38,36,51,.05)" data-action="openBranchDet" data-arg="${esc(b.name)}">
+        <div style="position:relative;height:86px;background:#E8EAED">
+          ${mapSvgSmall()}
+          ${b.loc ? mapPinAt(b.loc.x, Math.max(16, Math.min(92, b.loc.y)), 24) : ''}
+          ${off ? '<div style="position:absolute;inset:0;background:rgba(255,255,255,.55);display:flex;align-items:center;justify-content:center"><div style="display:inline-flex;align-items:center;padding:5px 13px;border-radius:999px;font-size:10px;font-weight:800;color:var(--c-muted);background:#fff;border:1px solid #D8D4E2;box-shadow:0 2px 8px rgba(38,36,51,.12)">فرع موقوف مؤقتًا</div></div>' : ''}
+        </div>
+        <div style="padding:13px 16px 14px">
+          <div class="flex-center gap-8">
+            <div style="width:32px;height:32px;border-radius:10px;background:var(--c-purple-soft);display:flex;align-items:center;justify-content:center;flex:none">${ICONS.branch('#654e92', 14)}</div>
+            <div class="grow" style="font-size:13px;font-weight:800">${esc(b.name)}</div>
+            <div style="font-size:10.5px;font-weight:800;color:var(--c-info);white-space:nowrap">التفاصيل ←</div>
           </div>
-        </div>`).join('')}
-      <div class="flex gap-8" style="padding:12px 18px;border-top:1px solid var(--c-divider)">
-        ${input('brName', st.brName, 'اسم فرع جديد…', { cls: 'input input-sm grow', extra: 'style="flex:1"' })}
-        <button class="btn btn-purple btn-sm" style="height:40px;font-size:11.5px;border-radius:11px" data-action="addBranch">إضافة</button>
+          <div class="flex-center gap-7" style="font-size:10px;color:var(--c-muted);margin-top:7px">
+            ${pinIcon('#a8a4b8', 10)}
+            ${b.loc ? `${esc(b.loc.addr)} · <span class="num">${esc(b.loc.coords)}</span>` : `${esc(b.city)} — بلا موقع محدد`}
+          </div>
+          <div class="flex gap-8" style="margin-top:11px">
+            <div style="flex:1;background:var(--c-chip-bg);border-radius:10px;padding:8px 11px"><div class="num" style="font-size:14px;font-weight:700;color:var(--c-purple)">${ordCount}</div><div style="font-size:9px;font-weight:800;color:var(--c-muted)">طلبات</div></div>
+            <div style="flex:1;background:var(--c-chip-bg);border-radius:10px;padding:8px 11px"><div class="num" style="font-size:14px;font-weight:700;color:var(--c-info)">${teamCount}</div><div style="font-size:9px;font-weight:800;color:var(--c-muted)">الفريق</div></div>
+          </div>
+        </div>
+      </div>`;
+  }).join('');
+
+  return `
+    <div class="card" style="padding:18px 20px">
+      <div class="flex-center gap-10">
+        <div style="width:38px;height:38px;border-radius:11px;background:var(--c-purple-soft);display:flex;align-items:center;justify-content:center">${ICONS.branch('#654e92', 17)}</div>
+        <div class="grow">
+          <div style="font-size:14px;font-weight:800">إضافة فرع جديد</div>
+          <div style="font-size:10.5px;color:var(--c-muted);margin-top:1px">اسم الفرع + موقعه على الخريطة (<b style="color:var(--c-warn)">إلزامي</b>) ثم الإضافة.</div>
+        </div>
       </div>
+      <div class="flex gap-10 wrap" style="margin-top:13px">
+        ${input('brName', st.brName, 'اسم الفرع الجديد… (مثال: فرع الياسمين)', { cls: 'input', extra: 'style="flex:1.2;min-width:220px;font-size:12.5px"' })}
+        ${locPickButton(st.brLoc, 'openMapPickBr')}
+        <button class="btn btn-purple ${ready ? '' : 'disabled'}" style="padding:0 26px" data-action="addBranch">${ICONS.plus('#fff', 14, 2.4)} إضافة الفرع</button>
+      </div>
+    </div>
+
+    <div class="card mt-16" style="padding:18px 20px 20px">
+      <div class="flex-center gap-9" style="margin-bottom:14px">
+        <div style="width:38px;height:38px;border-radius:11px;background:var(--c-info-bg);display:flex;align-items:center;justify-content:center">${ICONS.branch('#0d7f93', 17)}</div>
+        <div style="font-size:14px;font-weight:800">فروعي — <span class="num">${st.branches.length}</span></div>
+        <div class="grow"></div>
+        <div style="font-size:10px;color:var(--c-faint)">اضغط أي فرع لعرض بياناته وموقعه وطلباته وفريقه</div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(310px,1fr));gap:14px">${cards}</div>
     </div>`;
 }
 
@@ -184,23 +238,85 @@ export function renderClientProfile(st) {
       </div>`;
   }
 
-  // العرض الرئيسي: الفروع + الفريق
+  // قسم الممنوحين التابعين (يظهر فقط لملف ممنوح سوبر)
+  const frEntry = st.frs.find((f) => f.name === c.name);
+  const isSuperClient = !!(frEntry && frEntry.super);
+  const subs = isSuperClient ? st.frs.filter((f) => f.parent === frEntry.id) : [];
+  const subsSection = !isSuperClient ? '' : `
+    <div class="card mt-16" style="border-color:var(--c-purple-border);overflow:hidden">
+      <div class="flex-center gap-8" style="padding:15px 18px 11px">
+        <div class="card-title">الممنوحون التابعون — ${subs.length}</div>
+        ${chip(frEntry.region || '', 'chip-purple')}
+        <div class="grow"></div>
+        <div style="font-size:10px;color:var(--c-faint)">ممنوحوه يفتحون فروعهم فقط</div>
+      </div>
+      <div class="table-head" style="padding:9px 18px;border-top:1px solid var(--c-divider)">
+        <div style="flex:1.4">الممنوح التابع</div><div style="flex:1">السجل</div><div style="flex:.6">طلبات</div>
+        <div style="flex:.8">محفظته</div><div style="flex:2">فروعه</div><div style="width:90px"></div>
+      </div>
+      ${subs.map((f) => {
+        const m = FRANCHISEE_STATUS[f.active ? f.st : 'off'];
+        const subClient = st.clients.find((x) => x.name === f.name);
+        const brs = subClient ? subClient.branches : [];
+        return `
+        <div class="table-row clickable gap-10" style="padding:12px 18px" data-action="openSubProfile" data-arg="${f.id}">
+          <div style="flex:1.4">
+            <div style="font-size:12px;font-weight:800">${esc(f.name)}</div>
+            <div style="margin-top:4px">${chip(m.label, m.chip)}</div>
+          </div>
+          <div class="num" style="flex:1;font-size:10.5px;color:var(--c-muted)">${esc(f.cr)}</div>
+          <div class="num" style="flex:.6;font-size:12px;font-weight:700">${f.orders}</div>
+          <div class="num" style="flex:.8;font-size:12px;font-weight:700">${fmt0(f.bal)} <span style="font-size:9px;font-family:var(--font-ar);color:var(--c-faint)">ر.س</span></div>
+          <div style="flex:2;display:flex;gap:5px;flex-wrap:wrap">
+            ${brs.map((b) => `
+              <div class="flex-center" style="height:28px;gap:5px;padding:0 10px;border-radius:999px;background:var(--c-chip-bg);color:var(--c-purple);font-size:10px;font-weight:800">
+                ${ICONS.branch('#654e92', 10)} ${esc(b.name)}
+              </div>`).join('')}
+            ${brs.length === 0 ? '<div style="font-size:10px;color:var(--c-faint)">لا فروع بعد</div>' : ''}
+          </div>
+          <div style="width:90px;display:flex;justify-content:flex-end"><div style="font-size:10.5px;font-weight:800;color:var(--c-info)">الملف ←</div></div>
+        </div>`;
+      }).join('')}
+      <div class="flex gap-8" style="padding:12px 18px;border-top:1px solid var(--c-divider);background:var(--c-subtle)">
+        ${input('clSubName', st.clSubName, 'اسم منشأة الممنوح التابع…', { cls: 'input input-sm', extra: 'style="flex:1.4;background:#fff"' })}
+        ${input('clSubCr', st.clSubCr, 'رقم السجل التجاري', { cls: 'input input-sm', dir: 'ltr', extra: 'style="flex:1;background:#fff"' })}
+        <button class="btn btn-purple btn-sm" style="height:40px;border-radius:11px;font-size:11.5px;white-space:nowrap" data-action="addSubFranchisee">إنشاء ممنوح تابع</button>
+      </div>
+    </div>`;
+
+  // العرض الرئيسي: الفروع + الممنوحون التابعون + الفريق
   let mainView = '';
   if (!st.clWalletOpen) {
     const staffRoles = { worker: 'عامل', ops: 'مدير عمليات', fin: 'مالية' };
+    const clLocReady = !!st.clBrLoc;
     mainView = `
-      <div style="font-size:11.5px;font-weight:800;color:var(--c-muted);margin:16px 2px 8px">الفروع — ${c.branches.length}</div>
-      <div class="flex gap-7 wrap">
-        ${c.branches.map((b, bi) => `
-          <div class="flex-center gap-7" style="height:36px;padding:0 6px 0 13px;border-radius:999px;background:var(--c-purple-soft);color:var(--c-purple);font-size:11px;font-weight:800">
-            ${ICONS.branch('#654e92', 12)} ${esc(b.name)} <span style="font-weight:400;opacity:.7">· ${esc(b.city)}</span>
-            <div style="width:24px;height:24px;border-radius:999px;display:flex;align-items:center;justify-content:center;cursor:pointer;background:rgba(101,78,146,.12)" data-action="clientDelBranch" data-arg="${bi}">${ICONS.close('#654e92', 9, 2.4)}</div>
-          </div>`).join('')}
+      <div class="card mt-16" style="overflow:hidden">
+        <div class="flex-center" style="padding:15px 18px 11px">
+          <div class="card-title">الفروع التي يمتلكها — ${c.branches.length}</div>
+          <div class="grow"></div>
+          <div style="font-size:10px;color:var(--c-faint)">أضف أو أزل الفروع مباشرة</div>
+        </div>
+        <div class="flex gap-7 wrap" style="padding:4px 18px 14px">
+          ${c.branches.map((b, bi) => `
+            <div class="flex-center gap-7" style="height:36px;padding:0 6px 0 13px;border-radius:999px;background:var(--c-purple-soft);color:var(--c-purple);font-size:11px;font-weight:800">
+              ${ICONS.branch('#654e92', 12)} ${esc(b.name)} <span style="font-weight:400;opacity:.7">· ${esc(b.loc ? b.loc.addr : b.city)}</span>
+              <div style="width:24px;height:24px;border-radius:999px;display:flex;align-items:center;justify-content:center;cursor:pointer;background:rgba(101,78,146,.12)" data-action="clientDelBranch" data-arg="${bi}">${ICONS.close('#654e92', 9, 2.4)}</div>
+            </div>`).join('')}
+        </div>
+        <div style="padding:12px 18px;border-top:1px solid var(--c-divider);background:var(--c-subtle)">
+          <div class="flex gap-8">
+            ${input('clBrName', st.clBrName, 'اسم فرع جديد…', { cls: 'input input-sm', extra: 'style="flex:1;background:#fff"' })}
+            <button class="btn btn-purple btn-sm ${(st.clBrName || '').trim() && clLocReady ? '' : 'disabled'}" style="height:40px;border-radius:11px;font-size:11.5px" data-action="clientAddBranch">إضافة فرع</button>
+          </div>
+          <div class="flex-center gap-8 mt-9" style="height:42px;border-radius:11px;border:1.5px dashed ${clLocReady ? 'var(--c-success-border)' : '#D8D4E2'};background:#fff;padding:0 12px;cursor:pointer" data-action="openMapPickCl">
+            ${pinIcon(clLocReady ? '#1d7a3e' : '#7d7990', 15)}
+            <div class="grow" style="font-size:11.5px;font-weight:800;color:${clLocReady ? 'var(--c-success)' : 'var(--c-muted)'}">${clLocReady ? `${esc(st.clBrLoc.addr)} · ${esc(st.clBrLoc.coords)}` : 'موقع الفرع على الخريطة (إلزامي)'}</div>
+            <div style="font-size:10px;font-weight:800;color:var(--c-info)">${clLocReady ? 'تغيير الموقع' : 'فتح الخريطة'}</div>
+          </div>
+          <div style="font-size:9.5px;color:var(--c-faint);margin-top:6px">تحديد موقع الفرع على الخريطة <b>إلزامي</b> قبل الإضافة.</div>
+        </div>
       </div>
-      <div class="flex gap-8 mt-9">
-        ${input('clBrName', st.clBrName, 'اسم فرع جديد…', { cls: 'input input-sm', extra: 'style="flex:1"' })}
-        <button class="btn btn-purple btn-sm" style="height:40px;border-radius:11px;font-size:11.5px" data-action="clientAddBranch">إضافة فرع</button>
-      </div>
+      ${subsSection}
       <div class="card mt-16" style="overflow:hidden">
         <div class="flex-center" style="padding:15px 18px 11px">
           <div class="card-title">العمال والمستخدمون — ${c.staff.length}</div>

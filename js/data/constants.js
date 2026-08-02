@@ -47,16 +47,22 @@ export const FRANCHISEE_STATUS = {
 export const STAFF_ROLE_LABEL = { worker: 'عامل مطعم', ops: 'مدير عمليات', fin: 'مدير مالية', owner: 'مالك / مشتريات' };
 export const STAFF_ROLE_CHIP = { worker: 'chip-gray', ops: 'chip-info', fin: 'chip-blue', owner: 'chip-purple' };
 
-/** الأدوار السبعة (personas) وتنقّل كل دور */
+/** الأدوار الثمانية (personas) وتنقّل كل دور */
 export const ROLES = {
   worker: { name: 'عامل المطعم',              user: 'سالم العتيبي',      ini: 'س', org: 'مطاعم البلدة — فرع العليا', nav: ['dash', 'catalog', 'orders'] },
   ops:    { name: 'مدير العمليات',            user: 'أحمد الحربي',       ini: 'أ', org: 'مطاعم البلدة — فرع العليا', nav: ['dash', 'approvals', 'catalog', 'orders', 'users'] },
   owner:  { name: 'مدير المشتريات / المالك',  user: 'م. ناصر القحطاني',  ini: 'ن', org: 'مطاعم البلدة',              nav: ['dash', 'approvals', 'catalog', 'orders', 'wallet', 'reqs', 'users', 'branches', 'settings'] },
   fin:    { name: 'مدير المالية',             user: 'أ. سارة الشمري',    ini: 'س', org: 'مطاعم البلدة',              nav: ['dash', 'wallet', 'orders'] },
-  frz:    { name: 'الممنوح (فرنشايز)',        user: 'فهد المطيري',       ini: 'ف', org: 'مطاعم الريف الشمالي',       nav: ['dash', 'approvals', 'catalog', 'orders', 'wallet', 'users', 'branches', 'settings'] },
-  fr:     { name: 'مانح الفرنشايز',           user: 'عبدالله السالم',    ini: 'ع', org: 'مجموعة السالم',             nav: ['dash', 'analytics', 'frs', 'catalog', 'orders', 'wallet', 'reqs', 'users', 'branches', 'settings'] },
+  frz:    { name: 'الممنوح بيسك (فرنشايز)',   user: 'فهد المطيري',       ini: 'ف', org: 'مطاعم الريف الشمالي',       nav: ['dash', 'approvals', 'catalog', 'orders', 'wallet', 'users', 'branches', 'settings'] },
+  frzs:   { name: 'الممنوح سوبر (فرنشايز)',   user: 'م. فيصل الدوسري',   ini: 'ف', org: 'الشرقية للفرنشايز — المنطقة الشرقية', nav: ['dash', 'approvals', 'catalog', 'orders', 'wallet', 'analytics', 'frs', 'users', 'branches', 'settings'] },
+  fr:     { name: 'مانح الفرنشايز',           user: 'دوار السعادة',      ini: 'د', org: 'دوار السعادة',              nav: ['dash', 'analytics', 'frs', 'catalog', 'orders', 'wallet', 'reqs', 'users', 'branches', 'settings'] },
   b2b:    { name: 'B2B — سوبر أدمن',          user: 'فريق العمليات B2B', ini: 'B', org: 'منصة B2B',                  nav: ['dash', 'orders', 'approvals', 'tickets', 'reqs', 'clients', 'cadmin', 'catalog', 'analytics', 'frs', 'users', 'branches'] },
 };
+
+/** معرف الممنوح السوبر في بيانات العينة (يملكه دور frzs) */
+export const SUPER_FR_ID = 5;
+/** معرف عميل الممنوح السوبر */
+export const SUPER_CLIENT_ID = 6;
 
 /** الصفحات: العنوان + مسارا أيقونة SVG */
 export const PAGES = {
@@ -102,8 +108,12 @@ export const POLICY = {
 };
 
 /** الأدوار المخولة بالطلب من الكتالوج */
-export const CAN_ORDER = ['worker', 'ops', 'owner', 'frz'];
+export const CAN_ORDER = ['worker', 'ops', 'owner', 'frz', 'frzs'];
 /** الأدوار المخولة باقتراح المنتجات */
 export const CAN_REQUEST = ['owner', 'fr'];
 /** الأدوار المخولة بالدفع من المحفظة */
-export const CAN_PAY = ['owner', 'fin', 'frz', 'fr'];
+export const CAN_PAY = ['owner', 'fin', 'frz', 'frzs', 'fr'];
+
+/** السجل التجاري المعروض حسب دور الجلسة (بيانات عيّنة) */
+export const ORG_CR = { frzs: '4030-140552', frz: '4030-102211' };
+export const DEFAULT_CR = '4030-118842';
