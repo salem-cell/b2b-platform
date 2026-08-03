@@ -7,7 +7,12 @@
 
 ## 🟢 النظام لايف
 
-**الرابط:** https://b2b-platform-ten.vercel.app
+**رابط العملاء:** https://b2b-platform-ten.vercel.app
+**بوابة الإدارة (سوبر أدمن):** https://b2b-platform-ten.vercel.app/admin.html
+
+حساب «B2B — سوبر أدمن» لا يظهر إطلاقًا في الرابط العام؛ يظهر فقط في بوابة الإدارة،
+ودخوله يتطلب **رمز إدارة** يتحقق منه الخادم (متغير `ADMIN_KEY` في إعدادات Vercel —
+غيّروه من Project → Settings → Environment Variables ثم أعيدوا النشر).
 
 الواجهة تعمل على Backend حقيقي (Vercel Serverless Functions + **Neon Postgres**):
 جلسات محفوظة في القاعدة (تبقى بعد تحديث الصفحة)، وكل عملية أعمال تُنفذ وتُخزن على الخادم
