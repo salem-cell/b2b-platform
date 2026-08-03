@@ -61,3 +61,14 @@ export const PRODUCTS = [
 
 /** فهرس سريع للمنتج حسب المعرف */
 export const PRODUCT_MAP = Object.fromEntries(PRODUCTS.map((p) => [p.id, p]));
+
+/** مزامنة الكتالوج من لقطة الخادم (تعديل في المكان حتى تبقى الاستيرادات صالحة) */
+export function hydrateProducts(list) {
+  if (!Array.isArray(list) || !list.length) return;
+  PRODUCTS.length = 0;
+  for (const key of Object.keys(PRODUCT_MAP)) delete PRODUCT_MAP[key];
+  for (const p of list) {
+    PRODUCTS.push(p);
+    PRODUCT_MAP[p.id] = p;
+  }
+}

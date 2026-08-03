@@ -1,0 +1,17 @@
+{
+  "name": "b2b-platform",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "B2B restaurant supply platform — static frontend + Vercel serverless API on Neon Postgres",
+  "scripts": {
+    "migrate": "node scripts/migrate.js",
+    "dev": "vercel dev --listen 3000"
+  },
+  "dependencies": {
+    "@neondatabase/serverless": "^0.10.4"
+  },
+  "devDependencies": {
+    "dotenv": "^16.4.5"
+  }
+}

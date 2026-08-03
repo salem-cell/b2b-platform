@@ -176,29 +176,23 @@ const ACTIONS = {
       return;
     }
     const c = st.clients.find((x) => x.id === st.clientSel);
-    A.updateClient(c.id, (x) => ({ ...x, branches: [...x.branches, { name, city: c.city, loc: st.clBrLoc }] }));
-    setState({ clBrName: '', clBrLoc: null });
-    A.say(`أُضيف ${name} لفروع ${c.name}`);
+    A.patchClient(c.id, { branches: [...c.branches, { name, city: c.city, loc: st.clBrLoc }] },
+      `أُضيف ${name} لفروع ${c.name}`, { clBrName: '', clBrLoc: null });
   },
   clientDelBranch: (el) => {
     const st = getState();
     const c = st.clients.find((x) => x.id === st.clientSel);
     const bi = Number(el.dataset.arg);
-    const bn = c.branches[bi].name;
-    A.updateClient(c.id, (x) => ({ ...x, branches: x.branches.filter((_, i) => i !== bi) }));
-    A.say(`أُزيل ${bn}`);
+    A.patchClient(c.id, { branches: c.branches.filter((_, i) => i !== bi) }, `أُزيل ${c.branches[bi].name}`);
   },
   clientAddStaff: () => {
     const st = getState();
     const name = (st.clStaffName || '').trim();
     if (!name) { A.say('اكتب اسم العامل أولًا'); return; }
     const c = st.clients.find((x) => x.id === st.clientSel);
-    A.updateClient(c.id, (x) => ({
-      ...x,
-      staff: [...x.staff, { name, role: st.clStaffRole || 'worker', branch: c.branches[0] ? c.branches[0].name : 'الإدارة', st: 'ok' }],
-    }));
-    setState({ clStaffName: '' });
-    A.say(`أُنشئ حساب ${name} لدى ${c.name} — فعّال فورًا`);
+    A.patchClient(c.id, {
+      staff: [...c.staff, { name, role: st.clStaffRole || 'worker', branch: c.branches[0] ? c.branches[0].name : 'الإدارة', st: 'ok' }],
+    }, `أُنشئ حساب ${name} لدى ${c.name} — فعّال فورًا`, { clStaffName: '' });
   },
   clientToggleStaff: (el) => {
     const st = getState();
@@ -206,8 +200,8 @@ const ACTIONS = {
     const ui = Number(el.dataset.arg);
     const u = c.staff[ui];
     const off = u.st === 'off';
-    A.updateClient(c.id, (x) => ({ ...x, staff: x.staff.map((s, i) => (i === ui ? { ...s, st: off ? 'ok' : 'off' } : s)) }));
-    A.say(off ? `فُعّل ${u.name}` : `أُوقف ${u.name} — لا يستطيع الدخول`);
+    A.patchClient(c.id, { staff: c.staff.map((s, i) => (i === ui ? { ...s, st: off ? 'ok' : 'off' } : s)) },
+      off ? `فُعّل ${u.name}` : `أُوقف ${u.name} — لا يستطيع الدخول`);
   },
   clientMoveStaff: (el) => {
     const st = getState();
@@ -216,8 +210,8 @@ const ACTIONS = {
     const u = c.staff[ui];
     const options = c.branches.map((b) => b.name).concat(['الإدارة']);
     const next = options[(options.indexOf(u.branch) + 1) % options.length];
-    A.updateClient(c.id, (x) => ({ ...x, staff: x.staff.map((s, i) => (i === ui ? { ...s, branch: next } : s)) }));
-    A.say(`نُقل ${u.name} إلى ${next}`);
+    A.patchClient(c.id, { staff: c.staff.map((s, i) => (i === ui ? { ...s, branch: next } : s)) },
+      `نُقل ${u.name} إلى ${next}`);
   },
 
   // إدارة الكتالوج (B2B)
@@ -270,18 +264,11 @@ const ACTIONS = {
     const name = el.dataset.arg;
     setState({ usBranches: cur.includes(name) ? cur.filter((x) => x !== name) : [...cur, name] });
   },
-  confirmUser: (el) => {
-    const u = getState().users.find((x) => x.id === Number(el.dataset.arg));
-    A.setUserStatus(u.id, 'ok', `فُعّل حساب ${u.name} — يستطيع الدخول الآن بالإيميل وكلمة السر`);
-  },
-  holdUser: (el) => {
-    const u = getState().users.find((x) => x.id === Number(el.dataset.arg));
-    A.setUserStatus(u.id, 'off', `عُطّل حساب ${u.name} قبل التفعيل`);
-  },
+  confirmUser: (el) => A.setUserStatus(Number(el.dataset.arg), 'ok'),
+  holdUser: (el) => A.setUserStatus(Number(el.dataset.arg), 'off'),
   toggleUser: (el) => {
     const u = getState().users.find((x) => x.id === Number(el.dataset.arg));
-    const off = u.st === 'off';
-    A.setUserStatus(u.id, off ? 'ok' : 'off', off ? `أُعيد تفعيل ${u.name}` : `أُوقف ${u.name} — لا يستطيع الدخول`);
+    A.setUserStatus(u.id, u.st === 'off' ? 'ok' : 'off');
   },
   addBranch: () => A.addBranch(),
 
@@ -320,6 +307,9 @@ function rerender() {
 initState(createInitialState());
 subscribe(rerender);
 rerender();
+
+// استرجاع الجلسة من الخادم (يبقي المستخدم داخلًا بعد تحديث الصفحة)
+A.restoreSession();
 
 // إعادة الرسم عند تغيّر حجم الشاشة بين الجوال والمكتب
 mobileQuery.addEventListener('change', rerender);
