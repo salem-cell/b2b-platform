@@ -12,8 +12,9 @@ const SAMPLE_CR = '4030-118842';
 
 export default handler(async (req, res) => {
   if (req.method !== 'POST') throw httpError(405, 'Method not allowed');
-  const key = req.headers['x-migrate-key'];
-  if (!process.env.MIGRATE_KEY || key !== process.env.MIGRATE_KEY) throw httpError(403, 'مفتاح الترحيل غير صحيح');
+  const key = String(req.headers['x-migrate-key'] || '').trim();
+  const expected = String(process.env.MIGRATE_KEY || '').trim();
+  if (!expected || key !== expected) throw httpError(403, 'مفتاح الترحيل غير صحيح');
 
   const body = await readBody(req);
 
