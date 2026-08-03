@@ -1,6 +1,6 @@
-﻿// ØªØ±Ø­ÙŠÙ„ Ø¥Ø¯Ø§Ø±ÙŠ: ÙŠÙ†Ø´Ø¦ Ø§Ù„Ù…Ø®Ø·Ø· ÙˆÙŠØ¹Ø¨Ù‘Ø¦ Ø¨ÙŠØ§Ù†Ø§Øª Ø§Ù„Ø¹ÙŠÙ†Ø© (ÙŠØ¹Ù…Ù„ Ø¹Ù„Ù‰ Ø¨ÙŠØ¦Ø© Vercel Ø­ÙŠØ« ØªØªÙˆÙØ± Ø£Ø³Ø±Ø§Ø± Ø§Ù„Ù‚Ø§Ø¹Ø¯Ø©)
-// POST /api/admin/migrate  Ù…Ø¹ ØªØ±ÙˆÙŠØ³Ø©  x-migrate-key: <MIGRATE_KEY>
-// reset=1 ÙÙŠ Ø§Ù„Ø¬Ø³Ù… ÙŠØ¹ÙŠØ¯ Ø¨Ù†Ø§Ø¡ ÙƒÙ„ Ø§Ù„Ø¬Ø¯Ø§ÙˆÙ„ Ù…Ù† Ø§Ù„ØµÙØ±
+// ترحيل إداري: ينشئ المخطط ويعبّئ بيانات العينة (يعمل على بيئة Vercel حيث تتوفر أسرار القاعدة)
+// POST /api/admin/migrate  مع ترويسة  x-migrate-key: <MIGRATE_KEY>
+// reset=1 في الجسم يعيد بناء كل الجداول من الصفر
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { sql } from '../_lib/db.js';
@@ -14,7 +14,7 @@ export default handler(async (req, res) => {
   if (req.method !== 'POST') throw httpError(405, 'Method not allowed');
   const key = String(req.headers['x-migrate-key'] || '').trim();
   const expected = String(process.env.MIGRATE_KEY || '').trim();
-  if (!expected || key !== expected) throw httpError(403, 'Ù…ÙØªØ§Ø­ Ø§Ù„ØªØ±Ø­ÙŠÙ„ ØºÙŠØ± ØµØ­ÙŠØ­');
+  if (!expected || key !== expected) throw httpError(403, 'مفتاح الترحيل غير صحيح');
 
   const body = await readBody(req);
 
@@ -31,7 +31,7 @@ export default handler(async (req, res) => {
   }
 
   const [{ count }] = await sql`SELECT count(*)::int AS count FROM products`;
-  if (count > 0) return send(res, 200, { ok: true, seeded: false, note: `Ø§Ù„Ø¨ÙŠØ§Ù†Ø§Øª Ù…ÙˆØ¬ÙˆØ¯Ø© (${count} Ù…Ù†ØªØ¬)` });
+  if (count > 0) return send(res, 200, { ok: true, seeded: false, note: `البيانات موجودة (${count} منتج)` });
 
   const st = createInitialState();
 
