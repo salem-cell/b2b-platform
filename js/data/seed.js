@@ -54,6 +54,7 @@ export function createInitialState() {
     auth: 'phone',          // phone | otp | user
     role: null,             // null = شاشة الدخول
     page: 'dash',
+    mTab: 'home', mStack: [],   // تنقّل واجهة الجوال (تبويب سفلي + مكدس push)
     phone: '', otp: '',
     notifOpen: false, toast: null,
 

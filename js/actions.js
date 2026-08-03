@@ -54,7 +54,7 @@ export function verifyOtp() {
 }
 
 export function pickRole(role) {
-  setState({ role, page: 'dash', drawer: null, modal: null });
+  setState({ role, page: 'dash', mTab: 'home', mStack: [], drawer: null, modal: null });
 }
 
 export function switchUser() { setState({ role: null, auth: 'user' }); }
@@ -84,7 +84,7 @@ export function submitOrder() {
     date: 'الآن', st: 'ops', items, stamps: [now(), '', '', '', '', ''],
   };
   setState({
-    orders: [order, ...st.orders], cart: {}, modal: null, page: 'orders', orderSeq: st.orderSeq + 1,
+    orders: [order, ...st.orders], cart: {}, modal: null, page: 'orders', mTab: 'orders', mStack: [], orderSeq: st.orderSeq + 1,
     extraNotifs: notify(st, ['ops'], { c: 'اعتمادات', text: `طلب جديد بانتظار تعميدك — ${order.id}`, t: 'الآن' }),
   });
   say(`أُرسل الطلب ${order.id} لتعميد مدير العمليات`);
@@ -225,7 +225,7 @@ export function confirmReceive() {
     orders, tickets, extraNotifs,
     notifUnread: st.notifUnread + (shorts.length ? 1 : 0),
     ticketSeq: st.ticketSeq + (shorts.length ? 1 : 0),
-    modal: null, page: 'orders',
+    modal: null, page: 'orders', mTab: 'orders', mStack: [],
   });
   say(shorts.length
     ? `أُكّد الاستلام وفُتحت تذكرة نواقص ${tid} — أُرسلت إلى B2B لحلّها`

@@ -1,0 +1,107 @@
+/* ============================================================
+   واجهة الجوال — تُفعَّل تحت 820px (تصميم B2B App)
+   شاشات كاملة + شريط تبويبات سفلي + Bottom Sheets
+   ============================================================ */
+
+.m-app { position: fixed; inset: 0; display: flex; flex-direction: column; background: #fff; font-family: var(--font-ar); }
+.m-screens { flex: 1; position: relative; overflow: hidden; }
+.m-screen { position: absolute; inset: 0; display: flex; flex-direction: column; background: var(--c-page); }
+.m-screen.push { z-index: 30; background: #fff; animation: wFade .18s ease; }
+
+.m-head { flex: none; padding: 18px 18px 8px; display: flex; align-items: center; gap: 10px; }
+.m-head-safe { padding-top: max(18px, env(safe-area-inset-top)); }
+.m-title { font-size: 22px; font-weight: 800; }
+.m-title-sm { font-size: 16px; font-weight: 800; }
+.m-sub { font-size: 11.5px; color: #0D5866; margin-top: 2px; }
+.m-body { flex: 1; overflow-y: auto; scrollbar-width: none; padding-bottom: 130px; }
+.m-body::-webkit-scrollbar { display: none; }
+.m-pad { padding-left: 18px; padding-right: 18px; }
+
+.m-back {
+  width: 44px; height: 44px; border-radius: var(--r-pill);
+  background: #fff; border: 1px solid var(--c-card-border);
+  display: flex; align-items: center; justify-content: center; cursor: pointer; flex: none;
+}
+.m-back:active { opacity: .6; }
+
+.m-icon-btn {
+  width: 44px; height: 44px; border-radius: var(--r-pill);
+  background: #fff; border: 1px solid var(--c-card-border);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; position: relative;
+}
+.m-icon-btn:active { opacity: .6; }
+
+.m-card { background: #fff; border: 1px solid var(--c-card-border); border-radius: 18px; }
+.m-section-title { font-size: 14px; font-weight: 800; margin: 22px 18px 10px; display: flex; align-items: center; }
+.m-hero {
+  border-radius: 20px; background: var(--grad-hero);
+  box-shadow: 0 12px 28px rgba(8, 42, 58, .3); color: #fff; padding: 18px;
+}
+.m-pill-btn {
+  height: 44px; padding: 0 16px; border-radius: var(--r-pill);
+  background: var(--c-primary); color: #fff; font-size: 12px; font-weight: 800;
+  display: flex; align-items: center; gap: 6px; cursor: pointer; border: none; font-family: var(--font-ar);
+}
+.m-pill-btn:active { opacity: .85; }
+
+/* شرائح أفقية قابلة للتمرير */
+.m-chips { display: flex; gap: 7px; overflow-x: auto; scrollbar-width: none; padding-bottom: 4px; }
+.m-chips::-webkit-scrollbar { display: none; }
+.m-chips .filter-chip { height: 40px; }
+
+/* شريط التبويبات السفلي */
+.m-tabbar {
+  flex: none; position: relative; z-index: 40;
+  background: rgba(255, 255, 255, .96); border-top: 1px solid var(--c-card-border);
+  display: flex; align-items: stretch;
+  padding: 7px 4px calc(10px + env(safe-area-inset-bottom));
+}
+.m-tab {
+  flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px;
+  cursor: pointer; padding-top: 5px; position: relative; min-height: 48px;
+}
+.m-tab:active { opacity: .55; }
+.m-tab-label { font-size: 9.5px; font-weight: 800; }
+.m-tab-badge {
+  position: absolute; top: 1px; inset-inline-start: 50%; margin-inline-start: 7px;
+  background: var(--c-badge); color: #fff; font-size: 8.5px; font-weight: 700;
+  min-width: 15px; height: 15px; border-radius: var(--r-pill);
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--font-num); padding: 0 3px;
+}
+
+/* شريط السلة العائم */
+.m-cartbar {
+  position: absolute; bottom: 14px; right: 14px; left: 14px; z-index: 36;
+  background: var(--c-primary); border-radius: 16px; padding: 0 18px; height: 54px;
+  display: flex; align-items: center; gap: 10px; color: #fff; cursor: pointer;
+  box-shadow: 0 10px 26px rgba(13, 127, 147, .35); animation: mSheet .22s ease;
+}
+.m-cartbar:active { opacity: .9; }
+
+/* الطبقات السفلية (Bottom Sheets) */
+.m-sheet-wrap { position: absolute; inset: 0; z-index: 70; display: flex; flex-direction: column; justify-content: flex-end; }
+.m-sheet {
+  position: relative; background: #fff; border-radius: 24px 24px 0 0;
+  max-height: 86%; display: flex; flex-direction: column; animation: mSheet .24s ease;
+}
+.m-sheet-pad { padding: 18px 20px calc(26px + env(safe-area-inset-bottom)); }
+.m-sheet-body { flex: 1; overflow-y: auto; scrollbar-width: none; }
+@keyframes mSheet { from { transform: translateY(48px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+
+/* توست الجوال */
+.m-toast-wrap { position: absolute; top: 16px; left: 16px; right: 16px; z-index: 90; display: flex; justify-content: center; pointer-events: none; }
+
+/* أزرار كبيرة */
+.m-btn { height: 52px; border-radius: 14px; font-size: 14px; }
+.m-btn-sm { height: 46px; border-radius: 13px; font-size: 12.5px; }
+
+/* بطاقة منتج الجوال */
+.m-prod-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; }
+.m-prod-img { height: 86px; border-radius: 11px; position: relative; overflow: hidden; display: flex; align-items: center; justify-content: center; }
+.m-prod-img img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+
+/* إخفاء تمرير */
+.m-noscroll { scrollbar-width: none; }
+.m-noscroll::-webkit-scrollbar { display: none; }

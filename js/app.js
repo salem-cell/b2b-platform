@@ -18,6 +18,7 @@ import { renderTickets, renderRequests, renderClients, renderCatalogAdmin } from
 import { renderUsers, renderBranches, renderSettings, renderClientProfile } from './pages/org.js';
 import { renderDrawer } from './overlays/drawer.js';
 import { renderModal } from './overlays/modals.js';
+import { renderMobileApp } from './mobile/index.js';
 
 // ---------- خريطة الصفحات ----------
 const PAGES_RENDER = {
@@ -43,7 +44,11 @@ function renderToast(st) {
   return `<div class="toast-wrap"><div class="toast">${esc(st.toast)}</div></div>`;
 }
 
+// واجهة الجوال (تصميم B2B App) تحت 820px — نفس الحالة والإجراءات
+const mobileQuery = window.matchMedia('(max-width: 820px)');
+
 function renderApp(st) {
+  if (mobileQuery.matches) return renderMobileApp(st);
   if (!st.role) return renderLogin(st) + renderToast(st);
   const pageFn = PAGES_RENDER[st.page] || renderDashboard;
   return renderShell(st, pageFn(st)) + renderDrawer(st) + renderModal(st) + renderToast(st);
@@ -282,6 +287,22 @@ const ACTIONS = {
 
   // متفرقات
   rowSoon: () => A.say('هذه الشاشة ضمن الدفعة التالية من النموذج'),
+
+  // تنقّل الجوال
+  mGo: (el) => setState({ mTab: el.dataset.arg, mStack: [], drawer: null, modal: null, notifOpen: false }),
+  mBack: () => {
+    const st = getState();
+    if (st.modal) { setState({ modal: null }); return; }
+    if (st.drawer) { setState({ drawer: null }); return; }
+    if (st.mStack.length) setState({ mStack: st.mStack.slice(0, -1) });
+  },
+  mPushLists: () => setState({ mStack: [...getState().mStack, { s: 'lists' }] }),
+  mPushMyReqs: () => setState({ mStack: [...getState().mStack, { s: 'myReqs' }] }),
+  mPushCadmin: () => setState({ mStack: [...getState().mStack, { s: 'cadmin' }] }),
+  mPushBranches: () => setState({ mStack: [...getState().mStack, { s: 'branches' }] }),
+  mPushUsers: () => setState({ mStack: [...getState().mStack, { s: 'users' }] }),
+  goInvoicesM: () => setState({ mTab: 'wallet', finSeg: 'i', mStack: [], modal: null }),
+  mOpenBrNew: () => setState({ modal: { k: 'brNewM' } }),
 };
 
 // ---------- تحويلات حقول الإدخال الخاصة ----------
@@ -299,6 +320,16 @@ function rerender() {
 initState(createInitialState());
 subscribe(rerender);
 rerender();
+
+// إعادة الرسم عند تغيّر حجم الشاشة بين الجوال والمكتب
+mobileQuery.addEventListener('change', rerender);
+let lastMobile = mobileQuery.matches;
+window.addEventListener('resize', () => {
+  if (mobileQuery.matches !== lastMobile) {
+    lastMobile = mobileQuery.matches;
+    rerender();
+  }
+});
 
 // نقرة مفوَّضة: أقرب عنصر يحمل data-action يفوز، ونوقف الفقاعة
 root.addEventListener('click', (e) => {
