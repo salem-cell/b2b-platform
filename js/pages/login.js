@@ -24,13 +24,21 @@ export function renderLogin(st) {
       <button class="btn btn-primary btn-block mt-14 ${st.otp.length === 4 ? '' : 'disabled'}" style="height:52px;border-radius:14px" data-action="verifyOtp">تحقق ودخول</button>
       <div class="login-link" data-action="backPhone">تغيير الرقم</div>`;
   } else {
+    // حساب السوبر أدمن يظهر فقط في بوابة الإدارة /admin.html — ودخوله يتطلب رمز إدارة يتحقق منه الخادم
+    const isAdminPortal = typeof window !== 'undefined' && window.__B2B_ADMIN__;
+    const personas = Object.entries(ROLES).filter(([key]) => (key === 'b2b' ? isAdminPortal : !isAdminPortal));
     body = `
-      <div class="login-title">اختر حسابك</div>
-      <div class="login-sub">هذا الرقم مرتبط بعدة حسابات — اختر الحساب الذي تريد الدخول به.</div>
+      <div class="login-title">${isAdminPortal ? 'بوابة الإدارة' : 'اختر حسابك'}</div>
+      <div class="login-sub">${isAdminPortal
+        ? 'دخول سوبر أدمن B2B — أدخل رمز الإدارة السري ثم اختر الحساب.'
+        : 'هذا الرقم مرتبط بعدة حسابات — اختر الحساب الذي تريد الدخول به.'}</div>
+      ${isAdminPortal ? `
+        <div class="field-label" style="margin-top:18px">رمز الإدارة</div>
+        ${input('adminKey', st.adminKey, '••••••••', { dir: 'ltr', type: 'password', extra: 'style="font-family:var(--font-num);text-align:left;border-color:var(--c-purple-border);background:#F7F5FB"' })}` : ''}
       <div class="persona-list">
-        ${Object.entries(ROLES).map(([key, r]) => `
+        ${personas.map(([key, r]) => `
           <div class="persona" data-action="pickRole" data-arg="${key}">
-            <div class="persona-avatar">${esc(r.ini)}</div>
+            <div class="persona-avatar" ${key === 'b2b' ? 'style="background:var(--c-purple);color:#fff"' : ''}>${esc(r.ini)}</div>
             <div class="grow">
               <div class="persona-name">${esc(r.user)}</div>
               <div class="persona-meta">${esc(r.name)} · ${esc(r.org)}</div>

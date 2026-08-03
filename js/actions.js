@@ -71,7 +71,7 @@ export async function verifyOtp() {
 
 export async function pickRole(role) {
   try {
-    await apiPost('auth', { action: 'role', role });
+    await apiPost('auth', { action: 'role', role, adminKey: getState().adminKey || '' });
     const { snapshot } = await apiGet('state');
     applySnapshot(snapshot, { role, page: 'dash', mTab: 'home', mStack: [], drawer: null, modal: null, notifUnread: 2 });
   } catch (err) { say(err.message); }

@@ -27,6 +27,12 @@ export default handler(async (req, res) => {
     const s = await getSession(req);
     if (!s) throw httpError(401, 'سجّل الدخول أولًا');
     if (!ROLES[body.role]) throw httpError(400, 'دور غير معروف');
+    // دور السوبر أدمن محمي برمز إدارة سري (ADMIN_KEY في إعدادات Vercel)
+    if (body.role === 'b2b') {
+      const expected = String(process.env.ADMIN_KEY || '').trim();
+      const provided = String(body.adminKey || '').trim();
+      if (!expected || provided !== expected) throw httpError(403, 'رمز الإدارة غير صحيح — دخول السوبر أدمن من بوابة الإدارة فقط');
+    }
     await sql`UPDATE sessions SET role = ${body.role} WHERE token = ${s.token}`;
     return send(res, 200, { ok: true, role: body.role });
   }
