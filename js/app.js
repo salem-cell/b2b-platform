@@ -12,7 +12,7 @@ import { renderShell } from './pages/shell.js';
 import { renderDashboard } from './pages/dashboard.js';
 import { renderCatalog } from './pages/catalog.js';
 import { renderOrders, renderApprovals } from './pages/orders.js';
-import { renderFinance } from './pages/finance.js';
+import { renderFinance, renderFintu } from './pages/finance.js';
 import { renderAnalytics, renderFranchisees } from './pages/network.js';
 import { renderTickets, renderRequests, renderClients, renderCatalogAdmin } from './pages/b2b.js';
 import { renderUsers, renderBranches, renderSettings, renderClientProfile } from './pages/org.js';
@@ -27,6 +27,7 @@ const PAGES_RENDER = {
   orders: renderOrders,
   approvals: renderApprovals,
   wallet: renderFinance,
+  fintu: renderFintu,
   analytics: renderAnalytics,
   frs: renderFranchisees,
   tickets: renderTickets,
@@ -129,6 +130,19 @@ const ACTIONS = {
   // تقارير المانح
   reportPdf: () => A.say('جارٍ تجهيز تقرير PDF — يصلك إشعار عند الجاهزية'),
   reportXls: () => A.say('جارٍ تجهيز ملف Excel — يصلك إشعار عند الجاهزية'),
+
+  // التعميدات المالية (B2B) وتسعير الاقتراحات وتفاصيل الفاتورة
+  approveTopup: (el) => A.approveTopup(el.dataset.arg),
+  rejectTopup: (el) => A.rejectTopup(el.dataset.arg),
+  viewProof: (el) => A.say(`فُتحت صورة الحوالة ${el.dataset.arg} — معاينة`),
+  toggleTuProof: () => setState({ tuProof: !getState().tuProof }),
+  reqPriceInc: () => setState({ reqPrice: Math.min(100000, getState().reqPrice + 1) }),
+  reqPriceDec: () => setState({ reqPrice: Math.max(1, getState().reqPrice - 1) }),
+  confirmReqPrice: () => A.confirmReqPrice(),
+  clientAcceptReq: (el) => A.clientAcceptReq(el.dataset.arg),
+  clientDeclineReq: (el) => A.clientDeclineReq(el.dataset.arg),
+  openInvoice: (el) => setState({ modal: { k: 'invDet', id: el.dataset.arg } }),
+  openOrderFromInvoice: (el) => setState({ modal: null, drawer: { k: 'order', id: el.dataset.arg } }),
 
   // فرنشايز
   openFrNew: () => setState({ modal: { k: 'frNew' }, frKind: 'normal', frRegion: '' }),
@@ -288,6 +302,7 @@ const ACTIONS = {
   mPushCadmin: () => setState({ mStack: [...getState().mStack, { s: 'cadmin' }] }),
   mPushBranches: () => setState({ mStack: [...getState().mStack, { s: 'branches' }] }),
   mPushUsers: () => setState({ mStack: [...getState().mStack, { s: 'users' }] }),
+  mPushFintu: () => setState({ mStack: [...getState().mStack, { s: 'fintu' }] }),
   goInvoicesM: () => setState({ mTab: 'wallet', finSeg: 'i', mStack: [], modal: null }),
   mOpenBrNew: () => setState({ modal: { k: 'brNewM' } }),
 };

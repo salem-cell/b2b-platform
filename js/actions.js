@@ -200,7 +200,36 @@ export async function payInvoice(id) {
 
 export async function confirmTopup() {
   const st = getState();
-  await run('wallet.topup', { amt: st.topupAmt, method: st.topupMethod }, { modal: null });
+  if (st.topupMethod === 'تحويل بنكي' && !st.tuProof) { say('أرفق صورة الحوالة أولًا — إلزامية للتحويل البنكي'); return; }
+  await run('wallet.topup', { amt: st.topupAmt, method: st.topupMethod, proof: st.tuProof },
+    { modal: null, tuProof: false });
+}
+
+// ---------- التعميدات المالية (B2B) ----------
+export async function approveTopup(id) {
+  await run('fintu.approve', { id });
+}
+
+export async function rejectTopup(id) {
+  await run('fintu.reject', { id });
+}
+
+// ---------- تسعير الاقتراحات ----------
+export function openReqPrice(id) {
+  setState({ modal: { k: 'reqPrice', id }, reqPrice: 64 });
+}
+
+export async function confirmReqPrice() {
+  const st = getState();
+  await run('reqs.price', { id: st.modal.id, price: st.reqPrice }, { modal: null });
+}
+
+export async function clientAcceptReq(id) {
+  await run('reqs.clientAccept', { id });
+}
+
+export async function clientDeclineReq(id) {
+  await run('reqs.clientDecline', { id });
 }
 
 // ---------- اللستات المحفوظة ----------
@@ -236,8 +265,9 @@ export async function submitRequest() {
     { modal: null, reqName: '', reqUnit: '', reqNote: '' });
 }
 
-export async function approveRequest(id) {
-  await run('reqs.approve', { id });
+/** زر B2B «تسعير وإرسال للعميل» — يفتح نافذة التسعير */
+export function approveRequest(id) {
+  openReqPrice(id);
 }
 
 export async function rejectRequest(id) {

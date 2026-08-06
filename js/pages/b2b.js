@@ -46,6 +46,8 @@ export function renderRequests(st) {
 
   const cards = st.prodReqs.map((r) => {
     const m = REQUEST_STATUS[r.st];
+    // اعتماد السعر لمقدّم الاقتراح (الأدوار العميلة المالكة) عندما يكون مُسعّرًا
+    const clientCanDecide = r.st === 'priced' && ['owner', 'fr', 'frz', 'frzs'].includes(st.role);
     return `
       <div class="card card-pad">
         <div class="flex-center gap-8">
@@ -54,10 +56,21 @@ export function renderRequests(st) {
         </div>
         <div style="font-size:10.5px;color:var(--c-muted);margin-top:6px"><span class="num">${r.id}</span> · ${esc(r.date)} · ${esc(r.by)} — ${esc(r.user || '')}</div>
         <div style="font-size:11px;color:var(--c-faint);margin-top:4px;line-height:1.8">«${esc(r.note)}»</div>
+        ${r.price != null && r.st !== 'pend' ? `
+          <div class="flex-center gap-7" style="background:var(--c-info-bg);border:1px solid #B5E7F0;border-radius:11px;padding:9px 13px;margin-top:10px">
+            <div style="font-size:11px;font-weight:800;color:var(--c-info)">سعر B2B المقترح</div>
+            <div class="grow"></div>
+            <div class="num" style="font-size:14px;font-weight:700;color:var(--c-info)">${fmt(r.price)} <span style="font-size:9px;font-family:var(--font-ar)">ر.س</span></div>
+          </div>` : ''}
         ${st.role === 'b2b' && r.st === 'pend' ? `
           <div class="flex gap-8 mt-12">
-            <button class="btn btn-primary" style="flex:1.5;height:42px;border-radius:11px;font-size:11.5px" data-action="approveRequest" data-arg="${r.id}">إضافة للكتالوج وتسعير</button>
+            <button class="btn btn-primary" style="flex:1.5;height:42px;border-radius:11px;font-size:11.5px" data-action="approveRequest" data-arg="${r.id}">تسعير وإرسال للعميل</button>
             <button class="btn btn-danger-outline" style="width:90px;height:42px;border-radius:11px;font-size:11.5px" data-action="rejectRequest" data-arg="${r.id}">رفض</button>
+          </div>` : ''}
+        ${clientCanDecide ? `
+          <div class="flex gap-8 mt-12">
+            <button class="btn btn-success-solid" style="flex:1.5;height:42px;border-radius:11px;font-size:11.5px" data-action="clientAcceptReq" data-arg="${r.id}">اعتماد السعر — إضافة في منتجاتي</button>
+            <button class="btn btn-danger-outline" style="width:110px;height:42px;border-radius:11px;font-size:11.5px" data-action="clientDeclineReq" data-arg="${r.id}">رفض السعر</button>
           </div>` : ''}
       </div>`;
   }).join('');

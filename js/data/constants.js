@@ -30,9 +30,10 @@ export const INVOICE_STATUS = {
 
 /** حالات اقتراحات المنتجات */
 export const REQUEST_STATUS = {
-  pend: { label: 'قيد المراجعة',   chip: 'chip-warn' },
-  ok:   { label: 'أُضيف للكتالوج', chip: 'chip-success' },
-  no:   { label: 'مرفوض',          chip: 'chip-danger' },
+  pend:   { label: 'قيد المراجعة',        chip: 'chip-warn' },
+  priced: { label: 'بانتظار اعتماد السعر', chip: 'chip-info' },
+  ok:     { label: 'أُضيف للكتالوج',      chip: 'chip-success' },
+  no:     { label: 'مرفوض',               chip: 'chip-danger' },
 };
 
 /** حالات الممنوحين (شبكة الفرنشايز) */
@@ -56,7 +57,7 @@ export const ROLES = {
   frz:    { name: 'الممنوح بيسك (فرنشايز)',   user: 'فهد المطيري',       ini: 'ف', org: 'مطاعم الريف الشمالي',       nav: ['dash', 'approvals', 'catalog', 'orders', 'wallet', 'users', 'branches', 'settings'] },
   frzs:   { name: 'الممنوح سوبر (فرنشايز)',   user: 'م. فيصل الدوسري',   ini: 'ف', org: 'الشرقية للفرنشايز — المنطقة الشرقية', nav: ['dash', 'approvals', 'catalog', 'orders', 'wallet', 'analytics', 'frs', 'users', 'branches', 'settings'] },
   fr:     { name: 'مانح الفرنشايز',           user: 'دوار السعادة',      ini: 'د', org: 'دوار السعادة',              nav: ['dash', 'analytics', 'frs', 'catalog', 'orders', 'wallet', 'reqs', 'users', 'branches', 'settings'] },
-  b2b:    { name: 'B2B — سوبر أدمن',          user: 'فريق العمليات B2B', ini: 'B', org: 'منصة B2B',                  nav: ['dash', 'orders', 'approvals', 'tickets', 'reqs', 'clients', 'cadmin', 'catalog', 'analytics', 'frs', 'users', 'branches'] },
+  b2b:    { name: 'B2B — سوبر أدمن',          user: 'فريق العمليات B2B', ini: 'B', org: 'منصة B2B',                  nav: ['dash', 'orders', 'approvals', 'fintu', 'tickets', 'reqs', 'clients', 'cadmin', 'catalog', 'analytics', 'frs', 'users', 'branches'] },
 };
 
 /** معرف الممنوح السوبر في بيانات العينة (يملكه دور frzs) */
@@ -77,6 +78,7 @@ export const PAGES = {
   reqs:      { label: 'اقتراح المنتجات',    p: 'M12 3.4a8.6 8.6 0 1 1 0 17.2 8.6 8.6 0 0 1 0-17.2z', p2: 'M12 8.5v7M8.5 12h7' },
   clients:   { label: 'العملاء',            p: 'M4 8.5A2 2 0 0 1 6 6.5h12a2 2 0 0 1 2 2V18a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z', p2: 'M9 6.5V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v1.5M4 12h16' },
   cadmin:    { label: 'إدارة الكتالوج',     p: 'M12 3.6 20 8v8l-8 4.4L4 16V8z', p2: 'M4 8l8 4.4L20 8M12 12.4V20' },
+  fintu:     { label: 'التعميدات المالية',  p: 'M4 8A2.6 2.6 0 0 1 6.6 5.4h10.8A2.6 2.6 0 0 1 20 8v8a2.6 2.6 0 0 1-2.6 2.6H6.6A2.6 2.6 0 0 1 4 16z', p2: 'M8.6 12.2l2.2 2.2 4.4-4.6' },
   users:     { label: 'اليوزرات والصلاحيات', p: 'M9.2 11.2a3.6 3.6 0 1 0 0-7.2 3.6 3.6 0 0 0 0 7.2zM3.6 19.6c0-3.1 2.5-5 5.6-5s5.6 1.9 5.6 5', p2: 'M16.5 8.5h5M19 6v5' },
   branches:  { label: 'إدارة فروعي',        p: 'M4 10 12 4l8 6', p2: 'M6 9.4V20h12V9.4M10 20v-5h4v5' },
   settings:  { label: 'الإعدادات',          p: 'M12 8.6a3.4 3.4 0 1 1 0 6.8 3.4 3.4 0 0 1 0-6.8z', p2: 'M12 3.6v2M12 18.4v2M3.6 12h2M18.4 12h2M6.1 6.1l1.4 1.4M16.5 16.5l1.4 1.4M6.1 17.9l1.4-1.4M16.5 7.5l1.4-1.4' },

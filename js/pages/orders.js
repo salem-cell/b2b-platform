@@ -13,9 +13,28 @@ export function rowAction(st, o) {
   if (st.role === 'ops' && o.st === 'ops')                          return { label: 'فتح التعميد',      action: 'openApprove', arg: o.id };
   if (['owner', 'frz', 'frzs'].includes(st.role) && o.st === 'purch') return { label: 'التعميد النهائي', action: 'openApprove', arg: o.id };
   if (st.role === 'worker' && o.st === 'ship')                      return { label: 'بدء الاستلام',     action: 'openReceive', arg: o.id };
-  if (st.role === 'b2b' && o.st === 'b2b')                          return { label: 'إرسال للتوصيل',    action: 'b2bAdvance',  arg: o.id };
-  if (st.role === 'b2b' && o.st === 'hold')                         return { label: 'استئناف التجهيز',  action: 'resumeOrder', arg: o.id };
+  if (st.role === 'b2b' && o.st === 'b2b')                          return { label: o.backorder ? 'جاهز — إرسال للتوصيل' : 'إرسال للتوصيل', action: 'b2bAdvance', arg: o.id };
+  if (st.role === 'b2b' && o.st === 'hold') {
+    // طلب النواقص التابع: التوفر يعني الإرسال المباشر للتوصيل بفاتورة مستقلة
+    return o.backorder
+      ? { label: 'توفرت — اعتماد وإرسال', action: 'b2bAdvance',  arg: o.id }
+      : { label: 'استئناف التجهيز',       action: 'resumeOrder', arg: o.id };
+  }
   return null;
+}
+
+/** شارة طلب النواقص التابع */
+export function backorderBadge(o) {
+  return o.backorder ? '<span class="chip chip-purple" style="font-size:8.5px;padding:3px 8px">نواقص · تابع</span>' : '';
+}
+
+/** شريحة حالة الطلب مع تحويل «مستلم بنواقص» لأخضر بعد حل التذكرة */
+export function orderChipResolved(st, o) {
+  if (o.st === 'short' && o.ticket) {
+    const tk = st.tickets.find((x) => x.id === o.ticket);
+    if (tk && tk.st === 'resolved') return '<div class="chip chip-success">مستلم بنواقص — حُلّت</div>';
+  }
+  return orderChip(o.st);
 }
 
 export function renderOrders(st) {
@@ -27,12 +46,15 @@ export function renderOrders(st) {
     const act = rowAction(st, o);
     return `
       <div class="table-row clickable" data-action="openOrderDrawer" data-arg="${o.id}">
-        <div class="num" style="flex:1.1;font-size:12.5px;font-weight:700">${o.id}</div>
+        <div style="flex:1.1;display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+          <span class="num" style="font-size:12.5px;font-weight:700">${o.id}</span>
+          ${backorderBadge(o)}
+        </div>
         <div style="flex:1.6;font-size:11px;color:var(--c-muted)">${esc(o.by)} · ${esc(o.branch)}</div>
         <div style="flex:1;font-size:10.5px;color:var(--c-faint)">${esc(o.date)}</div>
         <div class="num" style="flex:.7;font-size:11.5px;color:var(--c-muted)">${o.items.length}</div>
         ${showPrices ? `<div class="num" style="flex:1;font-size:12px;font-weight:700">${fmt(orderTotal(o))} <span style="font-size:9px;font-family:var(--font-ar);color:var(--c-faint)">ر.س</span></div>` : ''}
-        <div style="width:170px">${orderChip(o.st)}</div>
+        <div style="width:170px">${orderChipResolved(st, o)}</div>
         <div style="width:130px;display:flex;justify-content:flex-end">
           ${act ? `<button class="btn btn-primary btn-sm" data-action="${act.action}" data-arg="${act.arg}">${act.label}</button>` : ''}
         </div>

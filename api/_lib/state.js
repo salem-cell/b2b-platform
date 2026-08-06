@@ -2,7 +2,7 @@
 import { sql, SAMPLE_CR } from './db.js';
 
 export async function snapshot() {
-  const [products, orders, walletRows, txs, invoices, tickets, prodReqs, frs, clients, users, branches, lists, notifs] =
+  const [products, orders, walletRows, txs, invoices, tickets, prodReqs, frs, clients, users, branches, lists, notifs, topupReqs] =
     await Promise.all([
       sql`SELECT id, name, unit, cat, price::float, h, img, is_out FROM products ORDER BY id`,
       sql`SELECT * FROM orders ORDER BY created_at DESC`,
@@ -17,6 +17,7 @@ export async function snapshot() {
       sql`SELECT * FROM branches`,
       sql`SELECT id, name, items FROM saved_lists ORDER BY id`,
       sql`SELECT role, c, body, t FROM notifs ORDER BY id DESC LIMIT 200`,
+      sql`SELECT id, org, by_user, amt::float, proof, date_label FROM topup_reqs ORDER BY created_at DESC`,
     ]);
 
   const w = walletRows[0] || { bal: 0, cr_limit: 0, used: 0 };
@@ -29,7 +30,9 @@ export async function snapshot() {
     products: products.map((p) => ({ id: p.id, name: p.name, unit: p.unit, cat: p.cat, price: p.price, h: p.h, img: p.img, out: p.is_out })),
     orders: orders.map((o) => ({
       id: o.id, by: o.by_user, branch: o.branch, date: o.date_label, st: o.st,
-      items: o.items, stamps: o.stamps,
+      items: o.items, stamps: o.stamps, log: o.log || [],
+      ...(o.backorder ? { backorder: true } : {}),
+      ...(o.parent_ref ? { parentRef: o.parent_ref } : {}),
       ...(o.reason ? { reason: o.reason } : {}),
       ...(o.hold_reason ? { holdReason: o.hold_reason } : {}),
       ...(o.rej_at != null ? { rejAt: o.rej_at } : {}),
@@ -46,7 +49,8 @@ export async function snapshot() {
       val: Number(t.val), st: t.st, date: t.date_label,
       ...(t.cn ? { cn: t.cn } : {}), ...(t.hold_reason ? { holdReason: t.hold_reason } : {}),
     })),
-    prodReqs: prodReqs.map((r) => ({ id: r.id, name: r.name, unit: r.unit, by: r.by_org, user: r.by_user, note: r.note, date: r.date_label, st: r.st })),
+    prodReqs: prodReqs.map((r) => ({ id: r.id, name: r.name, unit: r.unit, by: r.by_org, user: r.by_user, note: r.note, date: r.date_label, st: r.st, ...(r.price != null ? { price: Number(r.price) } : {}) })),
+    topupReqs: topupReqs.map((r) => ({ id: r.id, org: r.org, by: r.by_user, amt: r.amt, proof: r.proof, date: r.date_label })),
     frs: frs.map((f) => ({ ...f, parent: f.parent == null ? undefined : Number(f.parent), id: Number(f.id) })),
     clients: clients.map((c) => ({ id: Number(c.id), name: c.name, cr: c.cr, city: c.city, orders: c.orders, spend: c.spend, st: c.st, bal: c.bal, limit: c.cr_limit, used: c.used, wst: c.wst, branches: c.branches, staff: c.staff })),
     users: users.map((u) => ({ id: Number(u.id), name: u.name, email: u.email || undefined, role: u.role, branch: u.branch, st: u.st })),

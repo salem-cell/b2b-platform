@@ -24,6 +24,21 @@ function sessionClientId(role) {
   return role === 'frz' ? 2 : role === 'frzs' ? 6 : 1;
 }
 
+/** قيد بسجل إجراءات الطلب */
+function logEntry(role, txt) {
+  return { who: ROLES[role].user, role: ROLES[role].name, txt, t: nowLabel() };
+}
+
+/** وصف نصي لتغييرات الكميات (يدخل في سجل الإجراءات) */
+function qtyDiffTxt(items, qty, pm) {
+  const parts = [];
+  for (const i of items) {
+    const nq = Math.max(0, Math.floor(Number(qty?.[i.pid] ?? i.qty)));
+    if (nq !== i.qty) parts.push(nq === 0 ? `حذف ${pm[i.pid].name}` : `${pm[i.pid].name} من ${i.qty} إلى ${nq}`);
+  }
+  return parts.length ? `عدّل الكميات: ${parts.join('، ')}` : '';
+}
+
 // ============ الطلبات ============
 
 async function ordersSubmit(role, { items }) {
@@ -38,13 +53,28 @@ async function ordersSubmit(role, { items }) {
     .map((i) => ({ pid: i.pid, qty: Math.min(999, Math.floor(Number(i.qty))) }));
   if (!clean.length) throw httpError(400, 'لا أصناف صالحة في السلة');
 
+  // مسار الطلب حسب الدور: المالك/الممنوحون → مباشرة إلى B2B؛ مدير العمليات → تعميد المشتريات؛ العامل → المسار الكامل
+  const direct = ['owner', 'frz', 'frzs'].includes(role);
+  const startSt = direct ? 'b2b' : role === 'ops' ? 'purch' : 'ops';
+  const n = nowLabel();
+  const stamps = direct ? [n, n, n, n, '', ''] : role === 'ops' ? [n, n, '', '', '', ''] : [n, '', '', '', '', ''];
+
   const seq = await nextSeq('order');
   const id = `ORD-${seq}`;
-  await sql`INSERT INTO orders (id, by_user, branch, date_label, st, items, stamps)
-            VALUES (${id}, ${ROLES[role].user}, ${'فرع العليا'}, 'الآن', 'ops',
-                    ${JSON.stringify(clean)}, ${JSON.stringify([nowLabel(), '', '', '', '', ''])})`;
-  await notify(['ops'], 'اعتمادات', `طلب جديد بانتظار تعميدك — ${id}`);
-  return `أُرسل الطلب ${id} لتعميد مدير العمليات`;
+  const log = [logEntry(role, `أنشأ الطلب (${clean.length} أصناف) وأرسله${direct ? ' مباشرة إلى B2B' : role === 'ops' ? ' لتعميد المشتريات' : ' لتعميد العمليات'}`)];
+  await sql`INSERT INTO orders (id, by_user, branch, date_label, st, items, stamps, log)
+            VALUES (${id}, ${ROLES[role].user}, ${'فرع العليا'}, 'الآن', ${startSt},
+                    ${JSON.stringify(clean)}, ${JSON.stringify(stamps)}, ${JSON.stringify(log)})`;
+
+  const notifTo = direct ? ['ops', 'fin'] : role === 'ops' ? ['owner'] : ['ops'];
+  const notifTxt = direct
+    ? `أرسل ${ROLES[role].user} الطلب ${id} مباشرة إلى B2B`
+    : role === 'ops' ? `طلب جديد بانتظار تعميدك النهائي — ${id}` : `طلب جديد بانتظار تعميدك — ${id}`;
+  await notify(notifTo, 'اعتمادات', notifTxt);
+
+  return direct
+    ? `أُرسل الطلب ${id} مباشرة إلى B2B — لا يحتاج تعميدًا`
+    : role === 'ops' ? `أُرسل الطلب ${id} لتعميد مدير المشتريات مباشرة` : `أُرسل الطلب ${id} لتعميد مدير العمليات`;
 }
 
 async function ordersApprove(role, { id, qty }) {
@@ -54,23 +84,57 @@ async function ordersApprove(role, { id, qty }) {
   if (o.st === 'ops' && !canFirst) throw httpError(403, 'تعميد هذه المرحلة لمدير العمليات');
   if (o.st === 'purch' && !canFinal) throw httpError(403, 'التعميد النهائي للمالك / المشتريات');
   if (!['ops', 'purch', 'b2b', 'hold'].includes(o.st)) throw httpError(400, 'الطلب ليس في مرحلة تعميد');
+  const pm = await productMap();
 
+  // الأصناف المحذوفة تبقى بكمية صفر — تظهر للجميع ويمكن لأي معمِّد لاحق إرجاعها
   let changed = false;
-  const items = o.items
-    .map((i) => {
-      const q = Math.max(0, Math.floor(Number(qty?.[i.pid] ?? i.qty)));
-      if (q !== i.qty) changed = true;
-      return { ...i, qty: q };
-    })
-    .filter((i) => i.qty > 0);
-  if (!items.length) throw httpError(400, 'لا يمكن اعتماد طلب بلا أصناف — استخدم الرفض');
+  const items = o.items.map((i) => {
+    const q = Math.max(0, Math.floor(Number(qty?.[i.pid] ?? i.qty)));
+    if (q !== i.qty) changed = true;
+    return { ...i, qty: q };
+  });
+  const liveCount = items.filter((i) => i.qty > 0).length;
+  const dtx = qtyDiffTxt(o.items, qty, pm);
+
+  // B2B ينقص كميات طلب قيد التجهيز → إصدار جزئي + طلب نواقص تابع تلقائيًا
+  if ((o.st === 'b2b' || o.st === 'hold') && role === 'b2b' && changed) {
+    const shortage = o.items
+      .map((i) => ({ pid: i.pid, qty: i.qty - Math.max(0, Math.floor(Number(qty?.[i.pid] ?? i.qty))) }))
+      .filter((i) => i.qty > 0);
+    if (shortage.length && !liveCount) throw httpError(400, 'كل الكميات صفر — علّق الطلب أو ارفضه بدل الإصدار الجزئي');
+    if (shortage.length) {
+      const childId = `${o.id}-B`;
+      const stamps = [...o.stamps];
+      stamps[4] = nowLabel();
+      const parentLog = [...o.log, logEntry(role, `${dtx ? `${dtx} — ` : ''}أصدر المتوفر للتوصيل وأنشأ طلب النواقص التابع ${childId}`)];
+      await sql`UPDATE orders SET st = 'ship', items = ${JSON.stringify(items)},
+                stamps = ${JSON.stringify(stamps)}, log = ${JSON.stringify(parentLog)} WHERE id = ${o.id}`;
+      await sql`INSERT INTO orders (id, by_user, branch, date_label, st, items, stamps, log, backorder, parent_ref, hold_reason)
+                VALUES (${childId}, ${o.by_user}, ${o.branch}, ${`اليوم ${nowLabel()}`}, 'hold',
+                        ${JSON.stringify(shortage)}, ${JSON.stringify(o.stamps)},
+                        ${JSON.stringify([logEntry(role, `أُنشئ تلقائيًا كطلب نواقص تابع لـ ${o.id}`)])},
+                        true, ${o.id}, 'بانتظار توفر الأصناف الناقصة — فور التوفر يُرسل للتوصيل بفاتورة مستقلة')`;
+      await notify(['worker', 'ops', 'owner', 'frz', 'frzs', 'fin'], 'طلبات',
+        `أصدر B2B المتوفر من ${o.id} للتوصيل، وأُنشئ طلب نواقص تابع ${childId} يُرسل فور التوفر`);
+      return `أُرسل المتوفر من ${o.id} للتوصيل وأُنشئ طلب النواقص التابع ${childId}`;
+    }
+  }
+
+  if (!liveCount) throw httpError(400, 'لا يمكن اعتماد طلب بلا أصناف — استخدم الرفض');
 
   const stamps = [...o.stamps];
   let st = o.st;
   if (o.st === 'ops') { st = 'purch'; stamps[1] = nowLabel(); }
   else if (o.st === 'purch') { st = 'b2b'; stamps[2] = nowLabel(); stamps[3] = nowLabel(); }
-  await sql`UPDATE orders SET st = ${st}, items = ${JSON.stringify(items)}, stamps = ${JSON.stringify(stamps)} WHERE id = ${id}`;
+  const actTxt = o.st === 'ops' ? 'عمّد الطلب وأرسله لتعميد المشتريات'
+    : o.st === 'purch' ? 'عمّد الطلب نهائيًا وأرسله إلى B2B' : 'عدّل الطلب أثناء التجهيز';
+  const log = [...o.log, logEntry(role, dtx ? `${dtx} ثم ${actTxt}` : actTxt)];
+  await sql`UPDATE orders SET st = ${st}, items = ${JSON.stringify(items)},
+            stamps = ${JSON.stringify(stamps)}, log = ${JSON.stringify(log)} WHERE id = ${id}`;
 
+  if ((o.st === 'b2b' || o.st === 'hold') && role === 'b2b' && changed) {
+    await notify(['worker', 'ops', 'owner', 'frz', 'frzs'], 'طلبات', `عدّل B2B كميات الطلب ${id} — يستمر التجهيز دون إعادة تعميد`);
+  }
   return o.st === 'ops'
     ? (changed ? `عُدّلت الكميات وعُمّد ${id} — أُشعر مقدّم الطلب ومدير المشتريات` : `عُمّد ${id} وأُرسل لمدير المشتريات`)
     : o.st === 'purch'
@@ -84,7 +148,8 @@ async function ordersReject(role, { id, reason }) {
   if (text.length < 5) throw httpError(400, 'سبب الرفض إلزامي (5 أحرف على الأقل) ويصل نصًا لمقدّم الطلب');
   const o = await getOrder(id);
   const rejAt = o.st === 'ops' ? 1 : o.st === 'purch' ? 2 : 4;
-  await sql`UPDATE orders SET st = 'rej', reason = ${text}, rej_at = ${rejAt} WHERE id = ${id}`;
+  const log = [...o.log, logEntry(role, `رفض الطلب — ${text}`)];
+  await sql`UPDATE orders SET st = 'rej', reason = ${text}, rej_at = ${rejAt}, log = ${JSON.stringify(log)} WHERE id = ${id}`;
   await notify(['worker', 'ops'], 'اعتمادات', `رُفض ${id} — ${text}`);
   return `رُفض ${id} وأُرسل السبب لمقدّم الطلب`;
 }
@@ -93,27 +158,46 @@ async function ordersHold(role, { id, reason }) {
   if (role !== 'b2b') throw httpError(403, 'تعليق الطلبات صلاحية B2B');
   const text = (reason || '').trim();
   if (text.length < 5) throw httpError(400, 'سبب التعليق إلزامي — يظهر للعميل نصًا');
-  await getOrder(id);
-  await sql`UPDATE orders SET st = 'hold', hold_reason = ${text} WHERE id = ${id}`;
+  const o = await getOrder(id);
+  const log = [...o.log, logEntry(role, `علّق الطلب — ${text}`)];
+  await sql`UPDATE orders SET st = 'hold', hold_reason = ${text}, log = ${JSON.stringify(log)} WHERE id = ${id}`;
   await notify(['worker', 'ops', 'owner', 'frz'], 'طلبات', `علّق B2B الطلب ${id} — ${text}`);
   return `عُلّق ${id} — يظهر السبب للعميل ويمكن الاستئناف`;
 }
 
 async function ordersResume(role, { id }) {
   if (role !== 'b2b') throw httpError(403, 'استئناف الطلبات صلاحية B2B');
-  await sql`UPDATE orders SET st = 'b2b', hold_reason = NULL WHERE id = ${id} AND st = 'hold'`;
+  const o = await getOrder(id);
+  const log = [...o.log, logEntry(role, 'استأنف تجهيز الطلب')];
+  await sql`UPDATE orders SET st = 'b2b', hold_reason = NULL, log = ${JSON.stringify(log)} WHERE id = ${id} AND st = 'hold'`;
   return `استؤنف تجهيز ${id}`;
 }
 
 async function ordersAdvance(role, { id }) {
   if (role !== 'b2b') throw httpError(403, 'الإرسال للتوصيل صلاحية B2B');
   const o = await getOrder(id);
-  if (o.st !== 'b2b') throw httpError(400, 'الطلب ليس قيد التجهيز');
+  // طلب النواقص التابع يُرسل من حالة التعليق فور توفر أصنافه، وتصدر له فاتورة مستقلة
+  if (!(o.st === 'b2b' || (o.backorder && o.st === 'hold'))) throw httpError(400, 'الطلب ليس قيد التجهيز');
   const stamps = [...o.stamps];
   stamps[4] = nowLabel();
-  await sql`UPDATE orders SET st = 'ship', stamps = ${JSON.stringify(stamps)} WHERE id = ${id}`;
-  await notify(['worker'], 'طلبات', `خرج طلبك ${id} للتوصيل — أكّد الاستلام عند وصوله`);
-  return `أُرسل ${id} للتوصيل`;
+  const log = [...o.log, logEntry(role, o.backorder ? 'اعتمد توفر الأصناف وأرسل الطلب للتوصيل بفاتورة مستقلة' : 'أرسل الطلب للتوصيل')];
+  await sql`UPDATE orders SET st = 'ship', hold_reason = NULL, stamps = ${JSON.stringify(stamps)}, log = ${JSON.stringify(log)} WHERE id = ${id}`;
+
+  let invMsg = '';
+  if (o.backorder) {
+    const pm = await productMap();
+    const total = o.items.reduce((s, i) => s + pm[i.pid].price * i.qty, 0) * (1 + VAT);
+    const [{ count }] = await sql`SELECT count(*)::int AS count FROM invoices`;
+    const invId = `INV-${9330 + count}`;
+    await sql`INSERT INTO invoices (id, ref, due, amt, rem, st)
+              VALUES (${invId}, ${`${id} — نواقص ${o.parent_ref || ''}`}, 'الاستحقاق 10 أغسطس', ${total}, ${total}, 'unpaid')`;
+    invMsg = ` وصدرت فاتورته المستقلة ${invId}`;
+    await notify(['worker', 'ops', 'owner', 'frz', 'frzs', 'fin'], 'طلبات',
+      `توفرت نواقص ${o.parent_ref || ''} — خرج ${id} للتوصيل وصدرت فاتورته ${invId}`);
+  } else {
+    await notify(['worker'], 'طلبات', `خرج طلبك ${id} للتوصيل — أكّد الاستلام عند وصوله`);
+  }
+  return `أُرسل ${id} للتوصيل${invMsg}`;
 }
 
 async function ordersReceive(role, { id, recv }) {
@@ -122,9 +206,11 @@ async function ordersReceive(role, { id, recv }) {
   if (o.st !== 'ship') throw httpError(400, 'الطلب ليس قيد التوصيل');
   const pm = await productMap();
 
-  const shorts = o.items.filter((i) => recv?.[i.pid]?.short);
+  const shorts = o.items.filter((i) => i.qty > 0 && recv?.[i.pid]?.short);
   const stamps = [...o.stamps];
   stamps[5] = nowLabel();
+  const log = [...o.log, logEntry(role, shorts.length ? 'أكّد الاستلام بنواقص وفُتحت تذكرة' : 'أكّد الاستلام الكامل')];
+  await sql`UPDATE orders SET log = ${JSON.stringify(log)} WHERE id = ${id}`;
   let msg;
 
   if (shorts.length) {
@@ -182,14 +268,48 @@ async function ticketsResume(role, { id }) {
 
 // ============ المحفظة والفواتير ============
 
-async function walletTopup(role, { amt, method }) {
+async function walletTopup(role, { amt, method, proof }) {
   if (!['owner', 'fin', 'frz', 'frzs', 'fr'].includes(role)) throw httpError(403, 'شحن المحفظة للمالك والمالية');
   const amount = Math.floor(Number(amt));
   if (!(amount >= 500 && amount <= 1_000_000)) throw httpError(400, 'مبلغ غير صالح');
-  const m = method === 'تحويل بنكي' ? 'تحويل بنكي' : 'مدى';
+
+  // التحويل البنكي: صورة الحوالة إلزامية، ويذهب الطلب لتعميد B2B قبل إضافة المبلغ
+  if (method === 'تحويل بنكي') {
+    if (!proof) throw httpError(400, 'أرفق صورة الحوالة أولًا — إلزامية للتحويل البنكي');
+    const seq = await nextSeq('tu');
+    const id = `TU-${seq}`;
+    await sql`INSERT INTO topup_reqs (id, org, by_user, amt, proof, date_label)
+              VALUES (${id}, ${ROLES[role].org}, ${ROLES[role].user}, ${amount}, ${`حوالة-${seq}.jpg`}, 'الآن')`;
+    await notify(['b2b'], 'مالية', `طلب شحن محفظة بتحويل بنكي ${id} — ${fmt0(amount)} ر.س من ${ROLES[role].org}`);
+    return `أُرسل طلب الشحن ${id} — تضاف ${fmt0(amount)} ر.س فور تعميد B2B للتحويل`;
+  }
+
   await sql`UPDATE wallet SET bal = bal + ${amount} WHERE org_cr = ${SAMPLE_CR}`;
-  await sql`INSERT INTO wallet_tx (org_cr, t, d, amt) VALUES (${SAMPLE_CR}, ${`شحن المحفظة — ${m}`}, 'الآن', ${amount})`;
-  return `تم شحن ${fmt0(amount)} ر.س — صدر إيصال PDF`;
+  await sql`INSERT INTO wallet_tx (org_cr, t, d, amt) VALUES (${SAMPLE_CR}, ${'شحن المحفظة — مدى'}, 'الآن', ${amount})`;
+  return `تم شحن ${fmt0(amount)} ر.س فورًا — صدر إيصال PDF`;
+}
+
+// ============ التعميدات المالية (B2B) ============
+
+async function fintuApprove(role, { id }) {
+  if (role !== 'b2b') throw httpError(403, 'تعميد التحويلات صلاحية B2B');
+  const [r] = await sql`SELECT * FROM topup_reqs WHERE id = ${id}`;
+  if (!r) throw httpError(404, 'طلب الشحن غير موجود');
+  const amount = Number(r.amt);
+  await sql`UPDATE wallet SET bal = bal + ${amount} WHERE org_cr = ${SAMPLE_CR}`;
+  await sql`INSERT INTO wallet_tx (org_cr, t, d, amt) VALUES (${SAMPLE_CR}, ${'شحن المحفظة — تحويل بنكي (عمّده B2B)'}, 'الآن', ${amount})`;
+  await sql`DELETE FROM topup_reqs WHERE id = ${id}`;
+  await notify(['owner', 'fin', 'frz', 'frzs', 'fr'], 'مالية', `عمّد B2B التحويل البنكي ${id} — أُضيفت ${fmt0(amount)} ر.س للمحفظة`);
+  return `عُمّد التحويل ${id} وأُضيف المبلغ إلى محفظة ${r.org}`;
+}
+
+async function fintuReject(role, { id }) {
+  if (role !== 'b2b') throw httpError(403, 'رفض التحويلات صلاحية B2B');
+  const [r] = await sql`SELECT * FROM topup_reqs WHERE id = ${id}`;
+  if (!r) throw httpError(404, 'طلب الشحن غير موجود');
+  await sql`DELETE FROM topup_reqs WHERE id = ${id}`;
+  await notify(['owner', 'fin', 'frz', 'frzs', 'fr'], 'مالية', `رفض B2B التحويل البنكي ${id} — لم يصل المبلغ للحساب البنكي، تواصلوا مع الدعم`);
+  return `رُفض التحويل ${id} وأُشعر العميل`;
 }
 
 async function invoicesPay(role, { id }) {
@@ -229,16 +349,41 @@ async function reqsSubmit(role, { name, unit, note }) {
   return `أُرسل اقتراحك ${id} لفريق B2B — يراجعه ويسعّره خلال يوم عمل`;
 }
 
-async function reqsApprove(role, { id }) {
-  if (role !== 'b2b') throw httpError(403, 'اعتماد الاقتراحات صلاحية B2B');
+/** B2B يسعّر الاقتراح ويعيده للعميل لاعتماد السعر قبل الإضافة */
+async function reqsPrice(role, { id, price }) {
+  if (role !== 'b2b') throw httpError(403, 'تسعير الاقتراحات صلاحية B2B');
+  const p = Number(price);
+  if (!(p > 0 && p <= 100000)) throw httpError(400, 'سعر غير صالح');
   const [r] = await sql`SELECT * FROM prod_reqs WHERE id = ${id}`;
   if (!r) throw httpError(404, 'الاقتراح غير موجود');
+  await sql`UPDATE prod_reqs SET st = 'priced', price = ${p} WHERE id = ${id}`;
+  await notify(['worker', 'ops', 'owner', 'fin', 'frz', 'frzs', 'fr'], 'اعتمادات',
+    `سعّر B2B اقتراحك «${r.name}» بـ ${fmt(p)} ر.س — بانتظار اعتمادك`);
+  return `سُعّر «${r.name}» وأُرسل للعميل للاعتماد`;
+}
+
+/** العميل يعتمد السعر المقترح — يُضاف المنتج للكتالوج بالسعر المتفق عليه */
+async function reqsClientAccept(role, { id }) {
+  if (!['owner', 'fr', 'frz', 'frzs'].includes(role)) throw httpError(403, 'اعتماد السعر لمقدّم الاقتراح');
+  const [r] = await sql`SELECT * FROM prod_reqs WHERE id = ${id}`;
+  if (!r) throw httpError(404, 'الاقتراح غير موجود');
+  if (r.st !== 'priced') throw httpError(400, 'الاقتراح ليس بانتظار اعتماد السعر');
   const [{ count }] = await sql`SELECT count(*)::int AS count FROM products`;
   const pid = `P-6${String(count).padStart(3, '0')}`;
   await sql`INSERT INTO products (id, name, unit, cat, price, h, img)
-            VALUES (${pid}, ${r.name}, ${r.unit || 'حبة'}, 'مواد غذائية', 64, 210, '')`;
+            VALUES (${pid}, ${r.name}, ${r.unit || 'حبة'}, 'مواد غذائية', ${Number(r.price) || 64}, 210, '')`;
   await sql`UPDATE prod_reqs SET st = 'ok' WHERE id = ${id}`;
-  return `أُضيف «${r.name}» للكتالوج وسُعّر — يظهر للعملاء الآن`;
+  await notify(['b2b'], 'اعتمادات', `اعتمد العميل تسعير «${r.name}» — أُضيف للكتالوج`);
+  return `اعتمدت السعر — أُضيف «${r.name}» في منتجاتي فورًا`;
+}
+
+async function reqsClientDecline(role, { id }) {
+  if (!['owner', 'fr', 'frz', 'frzs'].includes(role)) throw httpError(403, 'رفض السعر لمقدّم الاقتراح');
+  const [r] = await sql`SELECT * FROM prod_reqs WHERE id = ${id}`;
+  if (!r) throw httpError(404, 'الاقتراح غير موجود');
+  await sql`UPDATE prod_reqs SET st = 'no' WHERE id = ${id}`;
+  await notify(['b2b'], 'اعتمادات', `رفض العميل تسعير «${r.name}» (${fmt(Number(r.price) || 0)} ر.س) — أُغلق الاقتراح`);
+  return 'رفضت السعر — وصل الإشعار لفريق B2B';
 }
 
 async function reqsReject(role, { id }) {
@@ -411,10 +556,14 @@ export const COMMANDS = {
   'tickets.hold': ticketsHold,
   'tickets.resume': ticketsResume,
   'wallet.topup': walletTopup,
+  'fintu.approve': fintuApprove,
+  'fintu.reject': fintuReject,
   'invoices.pay': invoicesPay,
   'lists.save': listsSave,
   'reqs.submit': reqsSubmit,
-  'reqs.approve': reqsApprove,
+  'reqs.price': reqsPrice,
+  'reqs.clientAccept': reqsClientAccept,
+  'reqs.clientDecline': reqsClientDecline,
   'reqs.reject': reqsReject,
   'frs.create': frsCreate,
   'frs.approve': frsApprove,

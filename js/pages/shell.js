@@ -28,6 +28,7 @@ function navBadge(st, key) {
   if (key === 'orders' && st.role === 'worker') return shipPend;
   if (key === 'orders' && st.role === 'b2b') return b2bPrep;
   if (key === 'tickets') return openTk;
+  if (key === 'fintu') return (st.topupReqs || []).length;
   if (key === 'reqs' && st.role === 'b2b') return pendReqs;
   return 0;
 }

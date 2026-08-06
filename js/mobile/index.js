@@ -10,7 +10,7 @@ import {
   renderMHome, renderMCatalog, renderMOrders, renderMApprovals, renderMWallet,
   renderMAnalytics, renderMFrs, renderMClients, renderMTickets, renderMMore,
   renderMOrderDetail, renderMApprove, renderMReceive, renderMTopup,
-  renderMLists, renderMMyReqs, renderMCadmin, renderMBranches, renderMUsers,
+  renderMLists, renderMMyReqs, renderMCadmin, renderMBranches, renderMUsers, renderMFintu,
 } from './screens.js';
 import { renderMSheet, SHEET_KINDS } from './sheets.js';
 
@@ -37,6 +37,7 @@ const PUSH_SCREENS = {
   cadmin: renderMCadmin,
   branches: renderMBranches,
   users: renderMUsers,
+  fintu: renderMFintu,
 };
 
 function renderMToast(st) {

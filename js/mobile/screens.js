@@ -30,7 +30,7 @@ function orderCard(st, o, showPrices) {
   return `
     <div class="flex-center gap-10 clickable" style="padding:14px 16px;border-bottom:1px solid var(--c-divider);min-height:64px;cursor:pointer" data-action="openOrderDrawer" data-arg="${o.id}">
       <div class="grow">
-        <div class="num" style="font-size:13px;font-weight:700">${o.id}</div>
+        <div class="flex-center gap-6" style="flex-wrap:wrap"><span class="num" style="font-size:13px;font-weight:700">${o.id}</span>${o.backorder ? '<span class="chip chip-purple" style="font-size:8.5px;padding:3px 8px">نواقص · تابع</span>' : ''}</div>
         <div style="font-size:10.5px;color:var(--c-faint);margin-top:3px">${esc(o.date)} · ${esc(o.by)} · ${esc(o.branch)}</div>
       </div>
       <div style="text-align:left">
@@ -609,9 +609,10 @@ export function renderMTickets(st) {
               <div class="num" style="font-size:10.5px;color:var(--c-faint)">${r.id}</div>
             </div>
             <div style="font-size:10.5px;color:var(--c-muted);margin-top:4px">${esc(r.by)} · ${esc(r.date)} — «${esc(r.note)}»</div>
+            ${r.price != null && r.st !== 'pend' ? `<div class="num" style="font-size:11px;font-weight:800;color:var(--c-info);margin-top:6px">السعر المقترح: ${fmt(r.price)} ر.س</div>` : ''}
             ${r.st === 'pend' ? `
               <div class="flex gap-8" style="margin-top:12px">
-                <button class="btn btn-primary grow" style="height:44px;border-radius:12px;font-size:12.5px" data-action="approveRequest" data-arg="${r.id}">إضافة للكتالوج وتسعير</button>
+                <button class="btn btn-primary grow" style="height:44px;border-radius:12px;font-size:12.5px" data-action="approveRequest" data-arg="${r.id}">تسعير وإرسال للعميل</button>
                 <button class="btn btn-danger-outline" style="width:96px;height:44px;border-radius:12px;font-size:12px" data-action="rejectRequest" data-arg="${r.id}">رفض</button>
               </div>` : ''}
           </div>`;
@@ -636,7 +637,10 @@ export function renderMMore(st) {
     items.push({ l: 'إدارة الممنوحين', d: '', a: 'mGo', arg: 'frs' });
   }
   if (st.role === 'fr') items.push({ l: 'إنشاء ممنوحين', d: String(st.frs.length), a: 'mGo', arg: 'frs' });
-  if (st.role === 'b2b') items.push({ l: 'إدارة الكتالوج والتوفر', d: `${PRODUCTS.length} منتج`, a: 'mPushCadmin' });
+  if (st.role === 'b2b') {
+    items.push({ l: 'التعميدات المالية', d: (st.topupReqs || []).length ? `${st.topupReqs.length} بانتظار` : '', a: 'mPushFintu' });
+    items.push({ l: 'إدارة الكتالوج والتوفر', d: `${PRODUCTS.length} منتج`, a: 'mPushCadmin' });
+  }
 
   return `
     <div class="m-screen">
@@ -876,10 +880,16 @@ export function renderMTopup(st) {
               </div>
             </div>`).join('')}
         </div>
+        ${st.topupMethod === 'تحويل بنكي' ? `
+          <div style="font-size:12px;font-weight:800;color:#0D5866;margin:16px 4px 8px">صورة الحوالة <span style="color:var(--c-warn)">(إلزامية)</span></div>
+          <div class="flex-center gap-11" style="border:1.5px dashed ${st.tuProof ? 'var(--c-success-border)' : '#D8D4E2'};border-radius:13px;background:#fff;padding:14px 16px;cursor:pointer" data-action="toggleTuProof">
+            <div class="grow" style="font-size:12px;font-weight:800;color:${st.tuProof ? 'var(--c-success)' : 'var(--c-muted)'}">${st.tuProof ? 'أُرفقت صورة الحوالة ✓' : 'أرفق صورة الحوالة البنكية'}</div>
+            <div style="font-size:10.5px;font-weight:800;color:var(--c-info)">${st.tuProof ? 'تغيير' : 'إرفاق'}</div>
+          </div>` : ''}
         <div class="m-card mt-14" style="padding:14px 16px">
           <div class="flex" style="font-size:11.5px;color:var(--c-muted)"><div>الرصيد بعد الشحن</div><div class="grow"></div><div class="num" style="font-weight:700;color:var(--c-success)">${fmt(st.wallet.bal + st.topupAmt)} ر.س</div></div>
         </div>
-        <button class="btn btn-primary btn-block m-btn mt-14" data-action="confirmTopup">تأكيد الشحن — إيصال PDF فوري</button>
+        <button class="btn btn-primary btn-block m-btn mt-14" data-action="confirmTopup">${st.topupMethod === 'تحويل بنكي' ? 'إرسال طلب الشحن — يُضاف بعد تعميد B2B' : 'تأكيد الشحن — إيصال PDF فوري'}</button>
       </div>
     </div>`;
 }
@@ -920,6 +930,7 @@ export function renderMMyReqs(st) {
         <div style="font-size:12px;font-weight:800;color:#0D5866;margin:4px 4px 8px">مقترحاتي وحالتها</div>
         ${st.prodReqs.map((r) => {
           const m = REQUEST_STATUS[r.st];
+          const clientCanDecide = r.st === 'priced' && ['owner', 'fr', 'frz', 'frzs'].includes(st.role);
           return `
           <div class="m-card" style="padding:14px 16px;margin-bottom:10px">
             <div class="flex-center gap-8">
@@ -928,6 +939,17 @@ export function renderMMyReqs(st) {
             </div>
             <div style="font-size:10.5px;color:var(--c-muted);margin-top:5px"><span class="num">${r.id}</span> · ${esc(r.date)} · اقترحه ${esc(r.user || '')}</div>
             <div style="font-size:10.5px;color:var(--c-faint);margin-top:3px">«${esc(r.note)}»</div>
+            ${r.price != null && r.st !== 'pend' ? `
+              <div class="flex-center gap-7" style="background:var(--c-info-bg);border-radius:11px;padding:9px 13px;margin-top:9px">
+                <div style="font-size:10.5px;font-weight:800;color:var(--c-info)">سعر B2B المقترح</div>
+                <div class="grow"></div>
+                <div class="num" style="font-size:13.5px;font-weight:700;color:var(--c-info)">${fmt(r.price)} ر.س</div>
+              </div>` : ''}
+            ${clientCanDecide ? `
+              <div class="flex gap-8" style="margin-top:11px">
+                <button class="btn btn-success-solid grow" style="height:44px;border-radius:12px;font-size:12px" data-action="clientAcceptReq" data-arg="${r.id}">اعتماد السعر — إضافة في منتجاتي</button>
+                <button class="btn btn-danger-outline" style="width:96px;height:44px;border-radius:12px;font-size:11.5px" data-action="clientDeclineReq" data-arg="${r.id}">رفض</button>
+              </div>` : ''}
           </div>`;
         }).join('')}
         <div class="flex" style="align-items:baseline;gap:8px;margin:18px 4px 8px">
@@ -1004,6 +1026,33 @@ export function renderMBranches(st) {
           </div>`;
         }).join('')}
         <div class="banner-info-dashed" style="border-style:solid">تحديد موقع الفرع على الخريطة إلزامي عند الإضافة — اضغط أي فرع لعرض موقعه وطلباته وفريقه.</div>
+      </div>
+    </div>`;
+}
+
+/** التعميدات المالية (الجوال — B2B) */
+export function renderMFintu(st) {
+  const reqs = st.topupReqs || [];
+  return `
+    <div class="m-screen push">
+      ${pushHeader('التعميدات المالية', 'تحويلات بنكية تُضاف للمحفظة فور تعميدك')}
+      <div class="m-body m-pad" style="padding-top:6px">
+        ${reqs.map((r) => `
+          <div class="m-card" style="padding:14px 16px;margin-bottom:10px">
+            <div class="flex-center gap-8">
+              <div class="num" style="font-size:13px;font-weight:700">${r.id}</div>
+              ${chip('تحويل بنكي', 'chip-warn')}
+              <div class="grow"></div>
+              <div class="num" style="font-size:14px;font-weight:700">${fmt(r.amt)} <span style="font-size:9px;font-family:var(--font-ar);color:var(--c-faint)">ر.س</span></div>
+            </div>
+            <div style="font-size:10.5px;color:var(--c-muted);margin-top:5px">${esc(r.org)} · ${esc(r.by)}</div>
+            <div class="num" style="font-size:10px;font-weight:800;color:var(--c-info);margin-top:4px;cursor:pointer" data-action="viewProof" data-arg="${esc(r.proof)}">📎 ${esc(r.proof)}</div>
+            <div class="flex gap-8" style="margin-top:11px">
+              <button class="btn btn-success-solid grow" style="height:44px;border-radius:12px;font-size:12px" data-action="approveTopup" data-arg="${r.id}">تعميد الإضافة</button>
+              <button class="btn btn-danger-outline" style="width:96px;height:44px;border-radius:12px;font-size:12px" data-action="rejectTopup" data-arg="${r.id}">رفض</button>
+            </div>
+          </div>`).join('')}
+        ${reqs.length === 0 ? '<div class="empty-state" style="border-radius:18px">لا تحويلات بنكية بانتظار التعميد.</div>' : ''}
       </div>
     </div>`;
 }

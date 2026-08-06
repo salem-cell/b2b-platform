@@ -15,19 +15,25 @@ CREATE TABLE IF NOT EXISTS products (
 );
 
 CREATE TABLE IF NOT EXISTS orders (
-  id           text PRIMARY KEY,              -- ORD-xxxx
+  id           text PRIMARY KEY,              -- ORD-xxxx (واللاحقة -B لطلبات النواقص التابعة)
   by_user      text NOT NULL,
   branch       text NOT NULL,
   date_label   text NOT NULL,                 -- تسمية عرض (اليوم 09:12 / الآن…)
   st           text NOT NULL,                 -- ops|purch|b2b|hold|ship|done|short|rej
-  items        jsonb NOT NULL,                -- [{pid, qty}]
+  items        jsonb NOT NULL,                -- [{pid, qty}] (كمية 0 = صنف محذوف يظهر مشطوبًا)
   stamps       jsonb NOT NULL,                -- 6 طوابع زمنية
+  log          jsonb NOT NULL DEFAULT '[]',   -- سجل الإجراءات [{who, role, txt, t}]
+  backorder    boolean NOT NULL DEFAULT false,-- طلب نواقص تابع
+  parent_ref   text,                          -- الطلب الأصل لطلب النواقص
   reason       text,
   hold_reason  text,
   rej_at       int,
   ticket_id    text,
   created_at   timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS log jsonb NOT NULL DEFAULT '[]';
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS backorder boolean NOT NULL DEFAULT false;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS parent_ref text;
 
 CREATE TABLE IF NOT EXISTS wallet (
   org_cr    text PRIMARY KEY,                 -- السجل التجاري
@@ -78,7 +84,20 @@ CREATE TABLE IF NOT EXISTS prod_reqs (
   by_user    text NOT NULL DEFAULT '',
   note       text NOT NULL DEFAULT '—',
   date_label text NOT NULL,
-  st         text NOT NULL                    -- pend|ok|no
+  st         text NOT NULL,                   -- pend|priced|ok|no
+  price      numeric(12,2)                    -- سعر B2B المقترح (حالة priced)
+);
+ALTER TABLE prod_reqs ADD COLUMN IF NOT EXISTS price numeric(12,2);
+
+-- طلبات شحن المحفظة بالتحويل البنكي (بانتظار تعميد B2B)
+CREATE TABLE IF NOT EXISTS topup_reqs (
+  id         text PRIMARY KEY,                -- TU-xxx
+  org        text NOT NULL,
+  by_user    text NOT NULL,
+  amt        numeric(14,2) NOT NULL,
+  proof      text NOT NULL,                   -- اسم ملف صورة الحوالة
+  date_label text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
 );
 
 CREATE TABLE IF NOT EXISTS frs (
@@ -145,9 +164,10 @@ CREATE TABLE IF NOT EXISTS notifs (
 );
 
 CREATE TABLE IF NOT EXISTS seqs (
-  key text PRIMARY KEY,                       -- order|ticket|cn|req
+  key text PRIMARY KEY,                       -- order|ticket|cn|req|tu
   val bigint NOT NULL
 );
+INSERT INTO seqs (key, val) VALUES ('tu', 101) ON CONFLICT (key) DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS sessions (
   token      text PRIMARY KEY,

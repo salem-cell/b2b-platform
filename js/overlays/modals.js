@@ -70,17 +70,19 @@ function approveModal(st) {
         const p = PRODUCT_MAP[i.pid];
         const qty = st.approveQty[i.pid];
         return `
-        <div class="flex-center gap-11" style="padding:10px 0;border-bottom:1px solid var(--c-divider)">
+        <div class="flex-center gap-11" style="padding:10px 0;border-bottom:1px solid var(--c-divider);${qty === 0 ? 'opacity:.5' : ''}">
           ${prodThumb(p)}
           <div class="grow" style="min-width:0">
-            <div style="font-size:11.5px;font-weight:700">${esc(p.name)}</div>
-            <div style="font-size:9.5px;color:var(--c-faint);margin-top:2px">${esc(p.unit)}${qty !== i.qty ? '<span style="color:#c98a12;font-weight:800"> · عُدّلت</span>' : ''}</div>
+            <div style="font-size:11.5px;font-weight:700;${qty === 0 ? 'text-decoration:line-through' : ''}">${esc(p.name)}</div>
+            <div style="font-size:9.5px;color:var(--c-faint);margin-top:2px">${esc(p.unit)}${qty !== i.qty ? '<span style="color:#c98a12;font-weight:800"> · عُدّلت</span>' : ''}${qty === 0 ? '<span style="color:var(--c-danger);font-weight:800"> · محذوف — يمكن إرجاعه</span>' : ''}</div>
           </div>
           ${stepper(qty, 'approveInc', 'approveDec', i.pid)}
         </div>`;
       }).join('')}
     </div>
     <div class="modal-foot">
+      ${isB2bEdit && st.role === 'b2b' ? `
+        <div style="background:var(--c-purple-soft);border:1px solid var(--c-purple-border);border-radius:11px;padding:9px 12px;margin-bottom:10px;font-size:10.5px;line-height:1.8;color:#55417E"><b>إصدار جزئي:</b> إنقاص أي كمية هنا يشحن المتوفر فورًا ويُنشئ تلقائيًا طلب نواقص تابعًا بالكميات الناقصة، يُرسل فور توفره بفاتورة مستقلة.</div>` : ''}
       <div class="flex" style="font-size:13px;font-weight:800"><div>الإجمالي بعد التعديل</div><div class="grow"></div><div class="num">${fmt(total)} <span style="font-size:9.5px;font-family:var(--font-ar);color:var(--c-faint)">ر.س</span></div></div>
       <button class="btn btn-primary btn-block mt-12" data-action="doApprove">${btnLabel}</button>
       <button class="btn btn-danger-outline btn-block mt-9" style="height:46px;font-size:12.5px" data-action="openReject" data-arg="${o.id}">رفض الطلب — بسبب إلزامي</button>
@@ -240,13 +242,125 @@ function topupModal(st) {
             </div>
           </div>`).join('')}
       </div>
+      ${st.topupMethod === 'تحويل بنكي' ? `
+        <div class="field-label" style="margin-top:16px">صورة الحوالة <span style="color:var(--c-warn)">(إلزامية)</span></div>
+        <div class="flex-center gap-11" style="border:1.5px dashed ${st.tuProof ? 'var(--c-success-border)' : '#D8D4E2'};border-radius:13px;background:var(--c-subtle);padding:14px 16px;cursor:pointer" data-action="toggleTuProof">
+          <div style="width:40px;height:40px;border-radius:11px;background:${st.tuProof ? 'var(--c-success-bg)' : 'var(--c-chip-bg)'};display:flex;align-items:center;justify-content:center;flex:none">
+            ${st.tuProof
+              ? '<svg width="17" height="17" viewBox="0 0 24 24" fill="none"><path d="M5.5 12.5l4 4 9-9.5" stroke="#1d7a3e" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></path></svg>'
+              : '<svg width="17" height="17" viewBox="0 0 24 24" fill="none"><rect x="4" y="5" width="16" height="14" rx="2.4" stroke="#7d7990" stroke-width="1.7"></rect><circle cx="9" cy="10" r="1.7" stroke="#7d7990" stroke-width="1.6"></circle><path d="M5 17l4.5-4 3.5 3 2.8-2.4L20 17.5" stroke="#7d7990" stroke-width="1.7" stroke-linejoin="round"></path></svg>'}
+          </div>
+          <div class="grow">
+            <div style="font-size:12px;font-weight:800;color:${st.tuProof ? 'var(--c-success)' : 'var(--c-muted)'}">${st.tuProof ? 'أُرفقت صورة الحوالة' : 'أرفق صورة الحوالة البنكية'}</div>
+            <div style="font-size:9.5px;color:var(--c-faint);margin-top:1px">JPG / PNG / PDF — تظهر لفريق B2B في التعميدات المالية</div>
+          </div>
+          <div style="font-size:10.5px;font-weight:800;color:var(--c-info)">${st.tuProof ? 'تغيير' : 'إرفاق'}</div>
+        </div>` : ''}
       <div class="flex mt-14" style="font-size:11.5px;color:var(--c-muted);background:var(--c-subtle);border:1px solid var(--c-divider);border-radius:13px;padding:12px 16px">
         <div>الرصيد بعد الشحن</div><div class="grow"></div>
         <div class="num" style="font-weight:700;color:var(--c-success)">${fmt(st.wallet.bal + st.topupAmt)} ر.س</div>
       </div>
-      <button class="btn btn-primary btn-block mt-12" data-action="confirmTopup">تأكيد الشحن — إيصال PDF فوري</button>
+      <button class="btn btn-primary btn-block mt-12" data-action="confirmTopup">
+        ${st.topupMethod === 'تحويل بنكي' ? 'إرسال طلب الشحن — يُضاف بعد تعميد B2B' : 'تأكيد الشحن — إيصال PDF فوري'}
+      </button>
     </div>`;
 }
+
+// ---------- تسعير اقتراح منتج (B2B) ----------
+function reqPriceModal(st) {
+  const r = st.prodReqs.find((x) => x.id === st.modal.id) || { name: '' };
+  return `
+    <div style="padding:20px 22px 22px">
+      <div class="flex-center">
+        <div class="modal-title grow">تسعير «${esc(r.name)}»</div>
+        ${closeBtn()}
+      </div>
+      <div style="font-size:11px;color:var(--c-muted);line-height:1.9;margin-top:6px">حدد سعر الوحدة — يعود الاقتراح للعميل لاعتماده قبل الإضافة للكتالوج.</div>
+      <div class="flex-center gap-10" style="justify-content:center;background:var(--c-subtle);border:1px solid var(--c-card-border);border-radius:13px;padding:12px;margin-top:14px">
+        <button class="stepper-btn" style="width:44px;height:44px;background:#fff;border:1px solid var(--c-card-border);border-radius:11px" data-action="reqPriceInc">${ICONS.plus('#0d7f93', 13, 2.4)}</button>
+        <div class="num" style="width:110px;text-align:center;font-size:22px;font-weight:700">${fmt(st.reqPrice)} <span style="font-size:10px;font-family:var(--font-ar);color:var(--c-faint)">ر.س</span></div>
+        <button class="stepper-btn" style="width:44px;height:44px;background:#fff;border:1px solid var(--c-card-border);border-radius:11px" data-action="reqPriceDec">${ICONS.minus()}</button>
+      </div>
+      <div class="flex gap-9 mt-14">
+        <button class="btn btn-primary grow" data-action="confirmReqPrice">تسعير وإرسال للعميل</button>
+        <button class="btn btn-ghost" style="padding:0 18px;font-size:12px" data-action="closeAll">إلغاء</button>
+      </div>
+    </div>`;
+}
+
+// ---------- تفاصيل الفاتورة ----------
+function invoiceDetailModal(st) {
+  const v = st.invoices.find((x) => x.id === st.modal.id);
+  if (!v) return '';
+  const m = INVOICE_STATUS_LOCAL[v.st];
+  // الطلب المرتبط (المرجع يحتوي رقم ORD)
+  const ordId = (String(v.ref).match(/ORD-[\w-]+/) || [])[0];
+  const order = ordId ? st.orders.find((o) => o.id === ordId) : null;
+  const amt = Math.abs(Number(v.amt));
+  const sub = amt / 1.15;
+  const paid = amt - Number(v.rem);
+  return `
+    <div style="padding:20px 22px 22px;overflow-y:auto;min-height:0">
+      <div class="flex-center gap-10">
+        <div style="width:40px;height:40px;border-radius:12px;background:var(--c-blue-bg);display:flex;align-items:center;justify-content:center">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none"><path d="M6.5 3.5h11v17h-11z" stroke="#3C79F5" stroke-width="1.7"></path><path d="M9.3 8h5.4M9.3 11.5h5.4M9.3 15h3.5" stroke="#3C79F5" stroke-width="1.7" stroke-linecap="round"></path></svg>
+        </div>
+        <div class="grow">
+          <div class="flex-center gap-8 wrap">
+            <div class="num" style="font-size:16px;font-weight:800">${v.id}</div>
+            ${chip(m.label, m.chip)}
+          </div>
+          <div style="font-size:10.5px;color:var(--c-muted);margin-top:1px">${esc(v.ref)} · ${esc(v.due)}</div>
+        </div>
+        ${closeBtn()}
+      </div>
+      <div class="flex-center gap-8" style="background:var(--c-subtle);border:1px solid var(--c-divider);border-radius:12px;padding:10px 13px;margin-top:14px">
+        <div style="font-size:10.5px;color:var(--c-muted)">صادرة لـ</div>
+        <div style="font-size:11.5px;font-weight:800">مطاعم البلدة</div>
+        <div class="grow"></div>
+        <div class="num" style="font-size:10px;color:var(--c-faint)">C.R. 4030-118842</div>
+      </div>
+      ${order ? `
+        <div class="field-label">أصناف الفاتورة</div>
+        <div style="border:1px solid var(--c-divider);border-radius:13px;overflow:hidden;max-height:190px;overflow-y:auto">
+          ${order.items.filter((i) => i.qty > 0).map((i) => {
+            const p = PRODUCT_MAP[i.pid];
+            return `
+            <div class="flex-center gap-10" style="padding:9px 13px;border-bottom:1px solid #F7F5FA">
+              <div style="width:26px;height:26px;border-radius:8px;background:${p ? `hsl(${p.h},30%,93%)` : 'var(--c-chip-bg)'};flex:none"></div>
+              <div class="grow">
+                <div style="font-size:11.5px;font-weight:800">${esc(p ? p.name : i.pid)}</div>
+                <div style="font-size:9.5px;color:var(--c-faint)">${esc(p ? p.unit : '')} × <span class="num">${i.qty}</span></div>
+              </div>
+              ${p ? `<div class="num" style="font-size:11px;font-weight:700">${fmt(p.price * i.qty)} <span style="font-size:8.5px;font-family:var(--font-ar);color:var(--c-faint)">ر.س</span></div>` : ''}
+            </div>`;
+          }).join('')}
+        </div>
+        <div style="font-size:10.5px;font-weight:800;color:var(--c-info);cursor:pointer;margin:8px 2px 0;text-decoration:underline;display:inline-block" data-action="openOrderFromInvoice" data-arg="${esc(order.id)}">عرض الطلب ${esc(order.id)} كاملًا ←</div>` : ''}
+      <div style="background:var(--c-chip-bg);border-radius:13px;padding:13px 16px;margin-top:14px">
+        <div class="flex" style="font-size:11px;color:var(--c-muted)"><div>الإجمالي قبل الضريبة</div><div class="grow"></div><div class="num" style="font-weight:700">${fmt(sub)}</div></div>
+        <div class="flex" style="font-size:11px;color:var(--c-muted);margin-top:5px"><div>ضريبة القيمة المضافة 15%</div><div class="grow"></div><div class="num" style="font-weight:700">${fmt(amt - sub)}</div></div>
+        <div style="height:1px;background:var(--c-card-border);margin:9px 0"></div>
+        <div class="flex" style="font-size:13px;font-weight:800"><div>الإجمالي</div><div class="grow"></div><div class="num">${fmt(amt)} <span style="font-size:9.5px;font-family:var(--font-ar);color:var(--c-faint)">ر.س</span></div></div>
+        ${v.st === 'part' ? `
+          <div class="flex" style="font-size:11px;color:var(--c-success);margin-top:7px"><div>المسدد</div><div class="grow"></div><div class="num" style="font-weight:700">${fmt(paid)}</div></div>
+          <div class="flex" style="font-size:11px;color:var(--c-danger);margin-top:4px"><div>المتبقي</div><div class="grow"></div><div class="num" style="font-weight:700">${fmt(Number(v.rem))}</div></div>` : ''}
+      </div>
+      <div class="flex gap-9 mt-14">
+        ${(v.st === 'unpaid' || v.st === 'part') && CAN_PAY_LOCAL.includes(st.role)
+          ? `<button class="btn btn-primary grow" style="font-size:12.5px" data-action="payInvoice" data-arg="${v.id}">سداد ${fmt(Number(v.rem))} ر.س من المحفظة</button>` : ''}
+        <button class="btn num" style="padding:0 20px;border:1px solid var(--c-card-border);color:var(--c-info);font-size:12px;font-weight:700" data-action="invoicePdf" data-arg="${v.id}">PDF</button>
+        <button class="btn btn-ghost" style="padding:0 18px;font-size:12px" data-action="closeAll">إغلاق</button>
+      </div>
+    </div>`;
+}
+const INVOICE_STATUS_LOCAL = {
+  unpaid: { label: 'غير مدفوعة', chip: 'chip-danger' },
+  part:   { label: 'مدفوعة جزئيًا', chip: 'chip-warn' },
+  paid:   { label: 'مدفوعة', chip: 'chip-success' },
+  credit: { label: 'إشعار دائن', chip: 'chip-purple' },
+};
+const CAN_PAY_LOCAL = ['owner', 'fin', 'frz', 'frzs', 'fr'];
 
 // ---------- ملف ممنوح (نافذة مختصرة لممنوح بلا ملف عميل) ----------
 function franchiseeModal(st) {
@@ -582,6 +696,8 @@ const MODALS = {
   brDet: branchDetailModal,
   mapView: mapViewModal,
   mapPick: mapPickModal,
+  reqPrice: reqPriceModal,
+  invDet: invoiceDetailModal,
   approve: approveModal,
   reject: reasonModal,
   hold: reasonModal,
