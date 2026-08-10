@@ -28,7 +28,7 @@ export default handler(async (req, res) => {
                     ${JSON.stringify(Array.isArray(b.docs) ? b.docs.slice(0, 10).map((d) => clip(d, 80)) : [])},
                     ${clip(mgrName, 80)}, ${clip(b.mgrRole, 80)}, ${clip(b.mgrContact)},
                     ${JSON.stringify(Array.isArray(b.cats) ? b.cats.slice(0, 10).map((c) => clip(c, 40)) : [])},
-                    ${clip(b.monthly, 60)}, ${clip(b.payment)})`;
+                    ${clip(b.monthly, 60)}, ${clip(b.payment)}, 'pend')`;
   await notify(['b2b'], 'اعتمادات', `طلب تسجيل منشأة جديد ${id} — «${name}» بانتظار المراجعة`);
   return send(res, 200, { ok: true, id, msg: `استلمنا طلبك ${id} — يراجعه فريق B2B ويتواصل معك مسؤول الحساب` });
 });
