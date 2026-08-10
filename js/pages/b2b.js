@@ -4,9 +4,10 @@
 import { esc, ICONS } from '../core/dom.js';
 import { fmt, fmt0, stripe } from '../core/format.js';
 import { chip, filterChips, emptyState, prodThumb } from '../ui.js';
-import { REQUEST_STATUS, CATEGORIES, CAN_REQUEST } from '../data/constants.js';
+import { REQUEST_STATUS, CATEGORIES, CAN_REQUEST, NC_STATUS, RM_MARKS, RM_COLS, RM_ROWS } from '../data/constants.js';
 import { PRODUCTS } from '../data/products.js';
 import { filterProducts } from './catalog.js';
+import { typeChip } from './dashboard.js';
 
 /** شريحة حالة تذكرة */
 export function ticketChip(t) {
@@ -122,7 +123,10 @@ export function renderClients(st) {
     const ok = c.st === 'ok';
     return `
       <div class="table-row clickable" data-action="openClientProfile" data-arg="${c.id}">
-        <div style="flex:1.6;font-size:12.5px;font-weight:800">${esc(c.name)}</div>
+        <div style="flex:1.6;min-width:0">
+          <div style="font-size:12.5px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(c.name)}</div>
+          <div style="margin-top:4px">${typeChip(c.type, 9)}</div>
+        </div>
         <div style="flex:1;font-size:10.5px;color:var(--c-muted)">${esc(c.city)} · <span class="num">${esc(c.cr)}</span></div>
         <div class="num" style="flex:.7;font-size:12px;font-weight:700">${c.orders}</div>
         <div class="num" style="flex:1;font-size:12px;font-weight:700">${fmt0(c.spend)} <span style="font-size:9px;font-family:var(--font-ar);color:var(--c-faint)">ر.س</span></div>
@@ -135,9 +139,14 @@ export function renderClients(st) {
   }).join('');
 
   return `
+    <div class="flex-center" style="margin-bottom:14px">
+      <div style="font-size:12px;color:var(--c-muted)">كل منشآت المنصة بأنواعها الأربعة — مستقل، مانح، ممنوح بيسك، ممنوح سوبر.</div>
+      <div class="grow"></div>
+      <button class="btn btn-primary btn-pill" style="height:42px;font-size:12px" data-action="openClientNew">${ICONS.plus('#fff', 13, 2.6)} إنشاء عميل</button>
+    </div>
     <div class="card" style="overflow:hidden">
       <div class="table-head">
-        <div style="flex:1.6">المنشأة</div><div style="flex:1">المدينة · السجل</div><div style="flex:.7">طلبات</div>
+        <div style="flex:1.6">المنشأة · النوع</div><div style="flex:1">المدينة · السجل</div><div style="flex:.7">طلبات</div>
         <div style="flex:1">مشتريات يوليو</div><div style="flex:.9">المحفظة</div><div style="width:120px">الحالة</div><div style="width:150px"></div>
       </div>
       ${rows}
@@ -145,23 +154,249 @@ export function renderClients(st) {
     <div class="banner-info-dashed mt-12">إيقاف العميل يمنع منشأته كاملة من إرسال طلبات جديدة فورًا — ويظهر له بانر التوقيف في تطبيقه.</div>`;
 }
 
-export function renderCatalogAdmin() {
+// ============ إدارة الكتالوج الأساسي (v5): بحث + إضافة + تسعير مباشر + حذف ============
+
+/** زر سعر ± مصغّر بجدول الكتالوج */
+function priceStepper(action, arg, price) {
   return `
+    <div class="flex-center gap-6">
+      <button class="btn" style="width:26px;height:26px;border-radius:8px;padding:0;background:var(--c-subtle);color:var(--c-purple);font-size:14px;font-weight:800" data-action="${action}" data-arg="${esc(arg)}|-1">−</button>
+      <div class="num" style="min-width:52px;text-align:center;font-size:12.5px;font-weight:700">${fmt(price)}</div>
+      <button class="btn" style="width:26px;height:26px;border-radius:8px;padding:0;background:var(--c-purple);color:#fff;font-size:14px;font-weight:800" data-action="${action}" data-arg="${esc(arg)}|1">+</button>
+    </div>`;
+}
+
+export function renderCatalogAdmin(st) {
+  const q = (st.cadSearch || '').trim();
+  const cat = st.cadCat || 'الكل';
+  const list = PRODUCTS.filter((p) =>
+    (cat === 'الكل' || p.cat === cat) &&
+    (!q || p.name.includes(q) || p.id.includes(q)));
+  const total = list.reduce((s, p) => s + p.price, 0);
+
+  return `
+    <div class="flex-center gap-10 wrap" style="margin-bottom:14px">
+      <div>
+        <div style="font-size:12px;color:var(--c-muted)">الكتالوج الأساسي للمنصة — <span class="num" style="font-weight:800;color:var(--c-ink)">${list.length}</span> منتج${q || cat !== 'الكل' ? ' (مُصفّى)' : ''}</div>
+      </div>
+      <div class="grow"></div>
+      <div class="search-box" style="height:42px;min-width:250px;background:#fff;border:1px solid var(--c-divider);border-radius:12px">
+        ${ICONS.search('#a8a4b8', 15)}
+        <input data-input="cadSearch" data-key="cadSearch" value="${esc(st.cadSearch || '')}" placeholder="ابحث بالاسم أو الرمز…" style="flex:1;border:none;outline:none;background:transparent;font-size:12px">
+      </div>
+      <button class="btn btn-primary btn-pill" style="height:42px;font-size:12px" data-action="openCadNew">${ICONS.plus('#fff', 13, 2.6)} إضافة منتج</button>
+    </div>
+    <div style="margin-bottom:12px">${filterChips(CATEGORIES, cat, 'setCadCat')}</div>
     <div class="card" style="overflow:hidden">
       <div class="table-head">
-        <div style="width:52px"></div><div style="flex:1.7">المنتج</div><div style="flex:1">الوحدة</div>
-        <div style="flex:.9">القسم</div><div style="flex:.8">السعر</div><div style="width:150px"></div>
+        <div style="width:52px"></div><div style="flex:1.7">المنتج</div><div style="flex:.9">الوحدة</div>
+        <div style="flex:.9">القسم</div><div style="flex:1.1">السعر الأساسي</div><div style="width:210px"></div>
       </div>
-      ${PRODUCTS.map((p) => `
+      ${list.map((p) => `
         <div class="table-row" style="padding:10px 18px">
           <div style="width:52px"><div class="prod-thumb" style="width:40px;height:40px;background:${stripe(p.h)}">${p.img ? `<img src="${esc(p.img)}" alt="" loading="lazy" onerror="this.style.display='none'">` : ''}</div></div>
-          <div style="flex:1.7;font-size:12px;font-weight:800">${esc(p.name)}</div>
-          <div style="flex:1;font-size:10.5px;color:var(--c-muted)">${esc(p.unit)}</div>
+          <div style="flex:1.7;min-width:0">
+            <div style="font-size:12px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(p.name)}</div>
+            <div class="num" style="font-size:9.5px;color:var(--c-faint);margin-top:1px">${p.id}</div>
+          </div>
+          <div style="flex:.9;font-size:10.5px;color:var(--c-muted)">${esc(p.unit)}</div>
           <div style="flex:.9;font-size:10.5px;color:var(--c-muted)">${esc(p.cat)}</div>
-          <div class="num" style="flex:.8;font-size:12px;font-weight:700">${fmt(p.price)}</div>
-          <div style="width:150px;display:flex;justify-content:flex-end">
+          <div style="flex:1.1">${priceStepper('cadStepPrice', p.id, p.price)}</div>
+          <div style="width:210px;display:flex;justify-content:flex-end;gap:7px">
             <button class="btn btn-xs ${p.out ? 'btn-success-solid' : 'btn-warn-outline'}" style="border-width:1px" data-action="toggleProductAvailability" data-arg="${p.id}">${p.out ? 'إعادة توفير' : 'إيقاف مؤقت'}</button>
+            <button class="btn btn-xs btn-danger-outline" style="border-width:1px" data-action="cadDelete" data-arg="${p.id}">حذف</button>
           </div>
         </div>`).join('')}
+      ${list.length === 0 ? '<div style="padding:26px;text-align:center;font-size:12px;color:var(--c-muted)">لا نتائج مطابقة — عدّل البحث أو القسم.</div>' : ''}
+    </div>
+    <div class="banner-info-dashed mt-12">تعديل السعر هنا يغيّر <b>مرجع التسعير الأساسي</b> لكل المنصة — الأسعار الخاصة داخل ملفات العملاء تتقدّم عليه ولا تتأثر به.</div>`;
+}
+
+// ============ العملاء الجدد (v5): طلبات «سجّل منشأتك» ============
+
+export function renderNewClients(st) {
+  const list = st.newClients || [];
+  const rows = list.map((r) => {
+    const m = NC_STATUS[r.st] || NC_STATUS.pend;
+    return `
+      <div class="table-row clickable" data-action="openNcDet" data-arg="${r.id}">
+        <div style="flex:1.7;min-width:0">
+          <div style="font-size:12px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(r.name)}</div>
+          <div class="flex-center gap-6" style="margin-top:4px"><span style="font-size:9.5px;color:var(--c-muted)">${esc(r.activity)}</span>${typeChip(r.model, 8.5)}</div>
+        </div>
+        <div style="flex:1"><div class="num" style="font-size:11.5px;font-weight:700">${r.id}</div><div style="font-size:9.5px;color:var(--c-faint);margin-top:1px">${esc(r.date)}</div></div>
+        <div style="flex:1;font-size:10.5px;color:var(--c-muted)">${esc(r.city)} · <span class="num">${r.branchesN}</span> فروع</div>
+        <div style="flex:1.4;min-width:0">
+          <div style="font-size:11px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(r.mgrName)}</div>
+          <div style="font-size:9.5px;color:var(--c-faint);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" class="num">${esc(r.mgrContact)}</div>
+        </div>
+        <div class="num" style="flex:1;font-size:10.5px;font-weight:700;color:var(--c-purple)">${esc(r.monthly)}</div>
+        <div style="width:150px">${chip(m.label, m.chip)}</div>
+      </div>`;
+  }).join('');
+
+  return `
+    <div class="flex-center" style="margin-bottom:14px">
+      <div style="font-size:12px;color:var(--c-muted)">الطلبات الواردة من فورم <a href="register.html" target="_blank" style="color:var(--c-info);font-weight:800">«سجّل منشأتك»</a> العام — راجع واعتمد لإنشاء حساب العميل.</div>
+      <div class="grow"></div>
+      <button class="btn btn-primary btn-pill" style="height:42px;font-size:12px" data-action="openClientNew">${ICONS.plus('#fff', 13, 2.6)} إنشاء عميل</button>
+    </div>
+    <div class="card" style="overflow:hidden">
+      <div class="table-head">
+        <div style="flex:1.7">المنشأة · النشاط</div><div style="flex:1">الطلب</div><div style="flex:1">المدينة · الفروع</div>
+        <div style="flex:1.4">مسؤول الحساب</div><div style="flex:1">مشتريات متوقعة</div><div style="width:150px">الحالة</div>
+      </div>
+      ${rows}
+    </div>
+    ${list.length === 0 ? `<div class="mt-14">${emptyState('لا طلبات تسجيل جديدة.')}</div>` : ''}
+    <div class="banner-info-dashed mt-12">الاعتماد ينشئ حساب العميل فورًا بنوعه المطلوب وحد ائتماني افتتاحي 20,000 ر.س — والرفض يُشعر مسؤول الحساب.</div>`;
+}
+
+/** صفحة مراجعة طلب التسجيل الكاملة */
+export function renderNcDet(st) {
+  const r = (st.newClients || []).find((x) => x.id === st.ncSel);
+  if (!r) return renderNewClients(st);
+  const m = NC_STATUS[r.st] || NC_STATUS.pend;
+  const sec = (n, title, body) => `
+    <div class="card card-pad">
+      <div class="flex-center gap-8" style="margin-bottom:13px">
+        <div style="width:26px;height:26px;border-radius:9px;background:var(--c-info-bg);color:var(--c-info);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800">${n}</div>
+        <div style="font-size:13px;font-weight:800">${title}</div>
+      </div>${body}
+    </div>`;
+  const field = (l, v) => `
+    <div>
+      <div style="font-size:9.5px;color:var(--c-faint);font-weight:700">${l}</div>
+      <div style="font-size:12px;font-weight:800;margin-top:3px;line-height:1.7">${v || '—'}</div>
+    </div>`;
+
+  return `
+    <div class="flex-center gap-10" style="margin-bottom:14px">
+      <button class="btn" style="height:38px;padding:0 16px;border-radius:999px;background:#fff;border:1px solid var(--c-divider);font-size:11.5px;font-weight:800" data-action="closeNcDet">→ كل الطلبات</button>
+      <div class="grow"></div>
+      ${r.st === 'pend' ? `
+        <button class="btn btn-danger-outline" style="height:42px;padding:0 20px;border-radius:11px;font-size:12px" data-action="ncReject" data-arg="${r.id}">رفض الطلب</button>
+        <button class="btn btn-success-solid" style="height:42px;padding:0 24px;border-radius:11px;font-size:12px" data-action="ncApprove" data-arg="${r.id}">اعتماد — إنشاء حساب العميل</button>` : ''}
+      ${r.st === 'ok' && r.clientId ? `<button class="btn btn-primary" style="height:42px;padding:0 22px;border-radius:11px;font-size:12px" data-action="openClientProfile" data-arg="${r.clientId}">فتح ملف العميل ←</button>` : ''}
+    </div>
+    <div class="card card-pad" style="margin-bottom:14px">
+      <div class="flex-center gap-10 wrap">
+        <div>
+          <div class="flex-center gap-8"><div style="font-size:17px;font-weight:800">${esc(r.name)}</div>${typeChip(r.model)}</div>
+          <div style="font-size:10.5px;color:var(--c-muted);margin-top:5px"><span class="num">${r.id}</span> · وصل ${esc(r.date)} · ${esc(r.activity)}</div>
+        </div>
+        <div class="grow"></div>
+        ${chip(m.label, m.chip)}
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start">
+      ${sec('١', 'بيانات المنشأة', `
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+          ${field('نوع النشاط', esc(r.activity))}
+          ${field('نموذج التشغيل', typeChip(r.model))}
+          ${field('المدينة · مدن التغطية', `${esc(r.city)}${r.cities ? ` — ${esc(r.cities)}` : ''}`)}
+          ${field('عدد الفروع', `<span class="num">${r.branchesN}</span> فروع`)}
+        </div>`)}
+      ${sec('٢', 'البيانات النظامية', `
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+          ${field('السجل التجاري', `<span class="num">${esc(r.cr) || '—'}</span>`)}
+          ${field('الرقم الضريبي (VAT)', `<span class="num">${esc(r.vat) || '—'}</span>`)}
+        </div>
+        <div style="margin-top:13px">
+          <div style="font-size:9.5px;color:var(--c-faint);font-weight:700;margin-bottom:7px">المستندات المرفقة</div>
+          ${(r.docs || []).length
+            ? `<div class="flex gap-7 wrap">${r.docs.map((d) => `<span class="flex-center gap-6" style="height:30px;padding:0 12px;border-radius:999px;background:var(--c-info-bg);border:1px solid #B5E7F0;color:var(--c-info);font-size:10.5px;font-weight:800;cursor:pointer">📄 ${esc(d)}</span>`).join('')}</div>`
+            : '<div style="font-size:11px;color:var(--c-warn-deep);background:var(--c-warn-bg);border:1px dashed var(--c-warn-border);border-radius:10px;padding:9px 13px">لا مستندات مرفقة — اطلبها من مسؤول الحساب قبل الاعتماد.</div>'}
+        </div>`)}
+      ${sec('٣', 'مسؤول الحساب', `
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+          ${field('الاسم · الصفة', `${esc(r.mgrName)}${r.mgrRole ? ` · <span style="color:var(--c-muted);font-weight:700">${esc(r.mgrRole)}</span>` : ''}`)}
+          ${field('التواصل', `<span class="num">${esc(r.mgrContact)}</span>`)}
+        </div>`)}
+      ${sec('٤', 'احتياجات التوريد', `
+        <div class="flex gap-7 wrap" style="margin-bottom:13px">
+          ${(r.cats || []).map((c) => `<span style="height:28px;display:inline-flex;align-items:center;padding:0 12px;border-radius:999px;background:var(--c-subtle);font-size:10.5px;font-weight:800;color:var(--c-purple)">${esc(c)}</span>`).join('') || '—'}
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+          ${field('متوسط المشتريات الشهرية', `<span class="num" style="color:var(--c-purple)">${esc(r.monthly)}</span>`)}
+          ${field('الدفع · نوافذ الاستلام', esc(r.payment))}
+        </div>`)}
+    </div>`;
+}
+
+// ============ الأنواع واليوزرات (v5): مصفوفة صلاحيات مُصدَّرة ============
+
+export function renderRolesMatrix(st) {
+  const all = st.rolesMatrix || [];
+  const draft = all.find((m) => m.draft);
+  const cur = all.find((m) => m.cur);
+  const active = draft || cur;
+  if (!active) return emptyState('لا توجد مصفوفة صلاحيات بعد.');
+  const cells = active.cells;
+
+  const grid = `
+    <div style="overflow-x:auto">
+      <div style="min-width:860px">
+        <div style="display:grid;grid-template-columns:200px repeat(8,1fr);gap:6px;margin-bottom:6px">
+          <div></div>
+          ${RM_COLS.map((c) => `<div style="font-size:9.5px;font-weight:800;color:var(--c-muted);text-align:center;line-height:1.5;align-self:end">${c}</div>`).join('')}
+        </div>
+        ${RM_ROWS.map((row, ri) => `
+          <div style="display:grid;grid-template-columns:200px repeat(8,1fr);gap:6px;margin-bottom:6px">
+            <div style="padding:8px 10px;border-radius:11px;background:var(--c-subtle)">
+              <div style="font-size:11.5px;font-weight:800">${row.name}</div>
+              <div style="font-size:9px;color:var(--c-faint);margin-top:1px;line-height:1.5">${row.desc}</div>
+            </div>
+            ${RM_COLS.map((_, ci) => {
+              const mk = RM_MARKS[cells[ri]?.[ci]] || RM_MARKS.off;
+              return `<button class="btn" title="${mk.tip}" style="height:100%;min-height:44px;border-radius:11px;font-size:14px;font-weight:800;${mk.style}" data-action="rmToggleCell" data-arg="${ri}|${ci}">${mk.sym}</button>`;
+            }).join('')}
+          </div>`).join('')}
+      </div>
+    </div>`;
+
+  const legend = `
+    <div class="flex gap-14 wrap" style="margin-top:13px">
+      ${Object.values(RM_MARKS).map((m) => `
+        <div class="flex-center gap-7">
+          <span style="width:26px;height:26px;border-radius:8px;display:inline-flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;${m.style}">${m.sym}</span>
+          <span style="font-size:10.5px;font-weight:700;color:var(--c-muted)">${m.tip}</span>
+        </div>`).join('')}
+    </div>`;
+
+  const hist = all.filter((m) => !m.draft).map((m) => `
+    <div class="flex-center gap-10" style="padding:11px 4px;border-bottom:1px solid var(--c-divider)">
+      <div class="num" style="font-size:12px;font-weight:700;color:var(--c-purple)">v${m.ver}</div>
+      <div class="grow" style="min-width:0">
+        <div style="font-size:11.5px;font-weight:700">${esc(m.note)}</div>
+        <div style="font-size:9.5px;color:var(--c-faint);margin-top:1px">${esc(m.meta)}</div>
+      </div>
+      ${m.cur ? chip('المنشور حاليًا', 'chip-success') : ''}
+    </div>`).join('');
+
+  return `
+    <div class="flex-center gap-10 wrap" style="margin-bottom:14px">
+      <div>
+        <div class="flex-center gap-8">
+          ${chip(draft ? 'مسودة غير منشورة' : 'منشور وساري', draft ? 'chip-warn' : 'chip-success')}
+          <div class="num" style="font-size:12px;font-weight:700;color:var(--c-muted)">v${active.ver}</div>
+        </div>
+        <div style="font-size:10.5px;color:var(--c-muted);margin-top:5px">${esc(active.meta)}</div>
+      </div>
+      <div class="grow"></div>
+      ${draft ? `<button class="btn" style="height:42px;padding:0 18px;border-radius:11px;background:#fff;border:1px solid var(--c-divider);font-size:11.5px;font-weight:800;color:var(--c-danger)" data-action="rmDiscard">إهمال المسودة</button>` : ''}
+      <button class="btn ${draft ? 'btn-primary' : ''}" style="height:42px;padding:0 24px;border-radius:11px;font-size:12px;${draft ? '' : 'background:var(--c-subtle);color:var(--c-faint);cursor:default'}" ${draft ? 'data-action="rmPublish"' : ''}>نشر الإصدار</button>
+    </div>
+    ${draft ? '<div style="background:var(--c-warn-bg);border:1px solid var(--c-warn-border);color:var(--c-warn-deep);border-radius:12px;padding:11px 15px;font-size:11.5px;font-weight:700;margin-bottom:14px">لديك تعديلات غير منشورة — لا تسري على الحسابات حتى تنشر الإصدار.</div>' : ''}
+    <div class="card card-pad">
+      <div class="card-title" style="margin-bottom:4px">مصفوفة الأنواع × اليوزرات</div>
+      <div style="font-size:10.5px;color:var(--c-muted);margin-bottom:14px">اضغط أي خلية لتدوير صلاحيتها: ممكّن → جزئي → مدير الحساب → غير متاح.</div>
+      ${grid}
+      ${legend}
+    </div>
+    <div class="banner-info-dashed mt-12">وثيقة تشغيلية للمطورين أيضًا: كل إصدار منشور يقابل نسخة سياسة وصول (RBAC) في الخادم.</div>
+    <div class="card card-pad mt-14">
+      <div class="card-title" style="margin-bottom:8px">سجل الإصدارات</div>
+      ${hist || '<div style="font-size:11px;color:var(--c-muted)">لا إصدارات سابقة.</div>'}
     </div>`;
 }

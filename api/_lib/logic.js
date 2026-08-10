@@ -474,7 +474,163 @@ async function clientsPatch(role, { id, branches, staff }, msg) {
   return msg || 'تم التحديث';
 }
 
+/** أنواع العملاء الأربعة في المنصة */
+const CLIENT_TYPES = ['مستقل', 'مانح', 'ممنوح بيسك', 'ممنوح سوبر'];
+
+/** B2B ينشئ عميلًا جديدًا مكتمل النوع (من لوحة العملاء أو باعتماد طلب تسجيل) */
+async function clientsCreate(role, { name, cr, city, type, granterId, region }) {
+  if (role !== 'b2b') throw httpError(403, 'إنشاء العملاء صلاحية B2B');
+  const n = (name || '').trim(), c = (cr || '').trim();
+  if (!n || !c) throw httpError(400, 'أدخل اسم المنشأة ورقم السجل التجاري');
+  const ty = CLIENT_TYPES.includes(type) ? type : 'مستقل';
+  if (ty === 'ممنوح سوبر' && !(region || '').trim()) throw httpError(400, 'حدد منطقة امتياز الممنوح السوبر');
+
+  const id = Date.now();
+  await sql`INSERT INTO clients (id, name, cr, city, st, bal, cr_limit, used, wst, branches, staff, type)
+            VALUES (${id}, ${n}, ${c}, ${(city || '').trim() || '—'}, 'ok', 0, 20000, 0, 'ok', '[]', '[]', ${ty})`;
+  if (ty !== 'مستقل' && ty !== 'مانح') {
+    await sql`INSERT INTO frs (id, name, city, cr, st, active, parent, super, region)
+              VALUES (${id}, ${n}, ${(city || '').trim() || '—'}, ${c}, 'new', true,
+                      ${ty === 'ممنوح بيسك' ? Number(granterId) || null : null},
+                      ${ty === 'ممنوح سوبر'}, ${ty === 'ممنوح سوبر' ? (region || '').trim() : null})`;
+  }
+  return `أُنشئ العميل «${n}» من نوع ${ty} — يظهر في قائمة العملاء فورًا`;
+}
+
+// ============ كتالوج العميل الخاص (أسعار متفق عليها) ============
+
+/** خصم الاتفاق الافتراضي عند إضافة منتج لكتالوج عميل */
+const AGREEMENT_DISC = 0.05;
+
+async function clientsProdAdd(role, { id, pid }) {
+  if (role !== 'b2b') throw httpError(403, 'كتالوج العملاء صلاحية B2B');
+  const [p] = await sql`SELECT name, price::float FROM products WHERE id = ${pid}`;
+  if (!p) throw httpError(404, 'المنتج غير موجود');
+  const price = Math.round(p.price * (1 - AGREEMENT_DISC) * 100) / 100;
+  await sql`INSERT INTO client_products (client_id, pid, price) VALUES (${id}, ${pid}, ${price})
+            ON CONFLICT (client_id, pid) DO NOTHING`;
+  return `أُضيف «${p.name}» لكتالوج العميل بسعر اتفاق ${fmt(price)} ر.س (خصم ٥٪)`;
+}
+
+async function clientsProdStep(role, { id, pid, delta }) {
+  if (role !== 'b2b') throw httpError(403, 'كتالوج العملاء صلاحية B2B');
+  const d = Number(delta) > 0 ? 0.5 : -0.5;
+  const [row] = await sql`UPDATE client_products SET price = GREATEST(0.5, price + ${d})
+                          WHERE client_id = ${id} AND pid = ${pid} RETURNING price::float`;
+  if (!row) throw httpError(404, 'المنتج ليس في كتالوج العميل');
+  return `سعر العميل الخاص الآن ${fmt(row.price)} ر.س`;
+}
+
+async function clientsProdDel(role, { id, pid }) {
+  if (role !== 'b2b') throw httpError(403, 'كتالوج العملاء صلاحية B2B');
+  await sql`DELETE FROM client_products WHERE client_id = ${id} AND pid = ${pid}`;
+  return 'حُذف المنتج من كتالوج العميل — يعود لسعر الكتالوج الأساسي';
+}
+
+// ============ العملاء الجدد (طلبات «سجّل منشأتك») ============
+
+async function ncApprove(role, { id }) {
+  if (role !== 'b2b') throw httpError(403, 'اعتماد المنشآت الجديدة صلاحية B2B');
+  const [r] = await sql`SELECT * FROM new_clients WHERE id = ${id}`;
+  if (!r) throw httpError(404, 'طلب التسجيل غير موجود');
+  if (r.st !== 'pend') throw httpError(400, 'الطلب ليس قيد المراجعة');
+  const ty = CLIENT_TYPES.includes(r.model) ? r.model : 'مستقل';
+  const cid = Date.now();
+  await sql`INSERT INTO clients (id, name, cr, city, st, bal, cr_limit, used, wst, branches, staff, type)
+            VALUES (${cid}, ${r.name}, ${r.cr || `CR-${id}`}, ${r.city || '—'}, 'ok', 0, 20000, 0, 'ok', '[]', '[]', ${ty})`;
+  await sql`UPDATE new_clients SET st = 'ok', client_id = ${cid} WHERE id = ${id}`;
+  await notify(['b2b'], 'اعتمادات', `اعتُمدت منشأة «${r.name}» (${id}) وأُنشئ حسابها كعميل ${ty}`);
+  return `اعتُمدت «${r.name}» — أُنشئ حساب العميل وحدّه الائتماني الافتتاحي 20,000 ر.س`;
+}
+
+async function ncReject(role, { id }) {
+  if (role !== 'b2b') throw httpError(403, 'رفض المنشآت الجديدة صلاحية B2B');
+  const [r] = await sql`SELECT name FROM new_clients WHERE id = ${id}`;
+  if (!r) throw httpError(404, 'طلب التسجيل غير موجود');
+  await sql`UPDATE new_clients SET st = 'no' WHERE id = ${id}`;
+  return `رُفض طلب تسجيل «${r.name}» — أُشعر مسؤول الحساب`;
+}
+
+// ============ مصفوفة الأنواع واليوزرات (إصدارات منشورة) ============
+
+/** دورة علامات الخلية: ممكّن → جزئي → مدير → غير متاح */
+const RM_MARKS = ['on', 'part', 'admin', 'off'];
+
+async function rmDraftRow() {
+  const [d] = await sql`SELECT * FROM roles_matrix WHERE draft = true ORDER BY id DESC LIMIT 1`;
+  return d;
+}
+
+async function rolesSet(role, { row, col }) {
+  if (role !== 'b2b') throw httpError(403, 'تعديل مصفوفة الصلاحيات صلاحية B2B');
+  const r = Number(row), c = Number(col);
+  if (!(r >= 0 && r < 4 && c >= 0 && c < 8)) throw httpError(400, 'خلية غير صالحة');
+  let draft = await rmDraftRow();
+  if (!draft) {
+    const [cur] = await sql`SELECT * FROM roles_matrix WHERE cur = true ORDER BY id DESC LIMIT 1`;
+    if (!cur) throw httpError(400, 'لا يوجد إصدار منشور للبناء عليه');
+    const nextVer = `${cur.ver.split('.')[0]}.${Number(cur.ver.split('.')[1] || 0) + 1}`;
+    const [d] = await sql`INSERT INTO roles_matrix (ver, note, meta, cells, draft)
+                          VALUES (${nextVer}, 'مسودة قيد التحرير', ${`مسودة على أساس v${cur.ver}`}, ${JSON.stringify(cur.cells)}, true)
+                          RETURNING *`;
+    draft = d;
+  }
+  const cells = draft.cells;
+  cells[r][c] = RM_MARKS[(RM_MARKS.indexOf(cells[r][c]) + 1) % RM_MARKS.length];
+  await sql`UPDATE roles_matrix SET cells = ${JSON.stringify(cells)} WHERE id = ${draft.id}`;
+  return 'عُدّلت الخلية في المسودة — انشر الإصدار ليسري على الحسابات';
+}
+
+async function rolesPublish(role, { note }) {
+  if (role !== 'b2b') throw httpError(403, 'نشر الإصدارات صلاحية B2B');
+  const draft = await rmDraftRow();
+  if (!draft) throw httpError(400, 'لا توجد مسودة للنشر — عدّل خلية أولًا');
+  await sql`UPDATE roles_matrix SET cur = false WHERE cur = true`;
+  await sql`UPDATE roles_matrix SET cur = true, draft = false,
+            note = ${(note || '').trim() || 'تحديث صلاحيات الأنواع'},
+            meta = ${`نُشر ${nowLabel()} — فريق B2B`} WHERE id = ${draft.id}`;
+  await notify(['owner', 'ops', 'fr', 'frz', 'frzs'], 'اعتمادات', `نُشر إصدار جديد v${draft.ver} من مصفوفة الأنواع والصلاحيات — يسري فورًا`);
+  return `نُشر الإصدار v${draft.ver} — سرت الصلاحيات على كل الحسابات`;
+}
+
+async function rolesDiscard(role) {
+  if (role !== 'b2b') throw httpError(403, 'إدارة المسودات صلاحية B2B');
+  await sql`DELETE FROM roles_matrix WHERE draft = true`;
+  return 'أُهملت المسودة — عاد الإصدار المنشور كما هو';
+}
+
 // ============ الكتالوج والمستخدمون والفروع ============
+
+async function productsSetPrice(role, { pid, delta }) {
+  if (role !== 'b2b') throw httpError(403, 'تسعير الكتالوج صلاحية B2B');
+  const d = Number(delta) > 0 ? 0.5 : -0.5;
+  const [p] = await sql`UPDATE products SET price = GREATEST(0.5, price + ${d})
+                        WHERE id = ${pid} RETURNING name, price::float`;
+  if (!p) throw httpError(404, 'المنتج غير موجود');
+  return `سعر «${p.name}» الأساسي الآن ${fmt(p.price)} ر.س — مرجع تسعير كل العملاء`;
+}
+
+async function productsAdd(role, { name, unit, price, cat }) {
+  if (role !== 'b2b') throw httpError(403, 'إدارة الكتالوج صلاحية B2B');
+  const n = (name || '').trim();
+  const p = Number(price);
+  if (!n) throw httpError(400, 'اكتب اسم المنتج أولًا');
+  if (!(p > 0 && p <= 100000)) throw httpError(400, 'أدخل سعرًا صالحًا');
+  const [{ count }] = await sql`SELECT count(*)::int AS count FROM products`;
+  const pid = `P-6${String(count).padStart(3, '0')}`;
+  await sql`INSERT INTO products (id, name, unit, cat, price, h, img)
+            VALUES (${pid}, ${n}, ${(unit || '').trim() || 'حبة'}, ${(cat || '').trim() || 'مواد غذائية'}, ${p}, 205, '')`;
+  return `أُضيف «${n}» للكتالوج الأساسي (${pid}) بسعر ${fmt(p)} ر.س`;
+}
+
+async function productsDelete(role, { pid }) {
+  if (role !== 'b2b') throw httpError(403, 'إدارة الكتالوج صلاحية B2B');
+  const [p] = await sql`SELECT name FROM products WHERE id = ${pid}`;
+  if (!p) throw httpError(404, 'المنتج غير موجود');
+  await sql`DELETE FROM products WHERE id = ${pid}`;
+  await sql`DELETE FROM client_products WHERE pid = ${pid}`;
+  return `حُذف «${p.name}» نهائيًا من الكتالوج ومن كتالوجات العملاء الخاصة`;
+}
 
 async function productsToggle(role, { pid }) {
   if (role !== 'b2b') throw httpError(403, 'إدارة الكتالوج صلاحية B2B');
@@ -572,7 +728,19 @@ export const COMMANDS = {
   'clients.toggleAccount': clientsToggleAccount,
   'clients.toggleWallet': clientsToggleWallet,
   'clients.patch': (role, p) => clientsPatch(role, p, p.msg),
+  'clients.create': clientsCreate,
+  'clients.prodAdd': clientsProdAdd,
+  'clients.prodStep': clientsProdStep,
+  'clients.prodDel': clientsProdDel,
+  'nc.approve': ncApprove,
+  'nc.reject': ncReject,
+  'roles.set': rolesSet,
+  'roles.publish': rolesPublish,
+  'roles.discard': rolesDiscard,
   'products.toggle': productsToggle,
+  'products.setPrice': productsSetPrice,
+  'products.add': productsAdd,
+  'products.delete': productsDelete,
   'users.add': usersAdd,
   'users.setStatus': usersSetStatus,
   'users.update': usersUpdate,

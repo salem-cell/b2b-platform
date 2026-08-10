@@ -14,7 +14,7 @@ import { renderCatalog } from './pages/catalog.js';
 import { renderOrders, renderApprovals } from './pages/orders.js';
 import { renderFinance, renderFintu } from './pages/finance.js';
 import { renderAnalytics, renderFranchisees } from './pages/network.js';
-import { renderTickets, renderRequests, renderClients, renderCatalogAdmin } from './pages/b2b.js';
+import { renderTickets, renderRequests, renderClients, renderCatalogAdmin, renderNewClients, renderNcDet, renderRolesMatrix } from './pages/b2b.js';
 import { renderUsers, renderBranches, renderSettings, renderClientProfile } from './pages/org.js';
 import { renderDrawer } from './overlays/drawer.js';
 import { renderModal } from './overlays/modals.js';
@@ -33,6 +33,8 @@ const PAGES_RENDER = {
   tickets: renderTickets,
   reqs: renderRequests,
   clients: renderClients,
+  newclients: (st) => (st.ncSel ? renderNcDet(st) : renderNewClients(st)),
+  roles: renderRolesMatrix,
   cadmin: renderCatalogAdmin,
   users: renderUsers,
   branches: renderBranches,
@@ -230,6 +232,33 @@ const ACTIONS = {
 
   // إدارة الكتالوج (B2B)
   toggleProductAvailability: (el) => A.toggleProductAvailability(el.dataset.arg),
+  setCadCat: (el) => setState({ cadCat: el.dataset.arg }),
+  openCadNew: () => A.openCadNew(),
+  setCadnCat: (el) => setState({ cadnCat: el.dataset.arg }),
+  cadCreate: () => A.cadCreate(),
+  cadStepPrice: (el) => A.cadStepPrice(el.dataset.arg),
+  cadDelete: (el) => A.cadDelete(el.dataset.arg),
+
+  // v5: إنشاء عميل + كتالوج العميل الخاص
+  openClientNew: () => A.openClientNew(),
+  setCnType: (el) => setState({ cnType: el.dataset.arg, cnGranter: null, cnRegion: '' }),
+  setCnGranter: (el) => setState({ cnGranter: Number(el.dataset.arg) }),
+  createClient: () => A.createClient(),
+  openClProdAdd: () => A.openClProdAdd(),
+  clProdAdd: (el) => A.clProdAdd(el.dataset.arg),
+  clProdStep: (el) => A.clProdStep(el.dataset.arg),
+  clProdDel: (el) => A.clProdDel(el.dataset.arg),
+
+  // v5: العملاء الجدد (طلبات التسجيل)
+  openNcDet: (el) => setState({ ncSel: el.dataset.arg, page: 'newclients' }),
+  closeNcDet: () => setState({ ncSel: null }),
+  ncApprove: (el) => A.ncApprove(el.dataset.arg),
+  ncReject: (el) => A.ncReject(el.dataset.arg),
+
+  // v5: مصفوفة الأنواع واليوزرات
+  rmToggleCell: (el) => A.rmToggleCell(el.dataset.arg),
+  rmPublish: () => A.rmPublish(),
+  rmDiscard: () => A.rmDiscard(),
 
   // الخرائط ومواقع الفروع
   openMapPickBr: () => {

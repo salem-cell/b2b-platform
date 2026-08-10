@@ -163,11 +163,59 @@ CREATE TABLE IF NOT EXISTS notifs (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 
+-- كتالوج العميل الخاص: أسعار متفق عليها تتقدم على سعر الكتالوج الأساسي
+CREATE TABLE IF NOT EXISTS client_products (
+  client_id bigint NOT NULL,
+  pid       text NOT NULL,
+  price     numeric(12,2) NOT NULL,
+  PRIMARY KEY (client_id, pid)
+);
+
+-- نوع العميل (مستقل | مانح | ممنوح بيسك | ممنوح سوبر) — يُشتق للبيانات القديمة
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS type text;
+
+-- طلبات تسجيل المنشآت من فورم «سجّل منشأتك»
+CREATE TABLE IF NOT EXISTS new_clients (
+  id          text PRIMARY KEY,               -- NC-xxx
+  name        text NOT NULL,
+  activity    text NOT NULL DEFAULT '',       -- نوع النشاط
+  model       text NOT NULL DEFAULT 'مستقل',  -- نموذج التشغيل (يحدد نوع العميل)
+  city        text NOT NULL DEFAULT '',
+  cities      text NOT NULL DEFAULT '',       -- مدن التغطية
+  branches_n  int  NOT NULL DEFAULT 1,
+  cr          text NOT NULL DEFAULT '',
+  vat         text NOT NULL DEFAULT '',
+  docs        jsonb NOT NULL DEFAULT '[]',    -- أسماء المستندات المرفقة
+  mgr_name    text NOT NULL DEFAULT '',
+  mgr_role    text NOT NULL DEFAULT '',
+  mgr_contact text NOT NULL DEFAULT '',
+  cats        jsonb NOT NULL DEFAULT '[]',    -- احتياجات التوريد
+  monthly     text NOT NULL DEFAULT '',       -- متوسط المشتريات الشهرية
+  payment     text NOT NULL DEFAULT '',       -- الدفع ونوافذ الاستلام
+  st          text NOT NULL DEFAULT 'pend',   -- pend|ok|no
+  client_id   bigint,                         -- العميل المُنشأ عند الاعتماد
+  date_label  text NOT NULL DEFAULT 'الآن',
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+
+-- مصفوفة الأنواع واليوزرات (وثيقة صلاحيات مُصدَّرة بإصدارات)
+CREATE TABLE IF NOT EXISTS roles_matrix (
+  id         bigserial PRIMARY KEY,
+  ver        text NOT NULL,                   -- 1.0, 1.1 …
+  note       text NOT NULL DEFAULT '',
+  meta       text NOT NULL DEFAULT '',
+  cells      jsonb NOT NULL,                  -- [[mark×8]×4] بترتيب الأنواع
+  cur        boolean NOT NULL DEFAULT false,  -- الإصدار المنشور الحالي
+  draft      boolean NOT NULL DEFAULT false,  -- مسودة غير منشورة
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS seqs (
-  key text PRIMARY KEY,                       -- order|ticket|cn|req|tu
+  key text PRIMARY KEY,                       -- order|ticket|cn|req|tu|nc
   val bigint NOT NULL
 );
 INSERT INTO seqs (key, val) VALUES ('tu', 101) ON CONFLICT (key) DO NOTHING;
+INSERT INTO seqs (key, val) VALUES ('nc', 504) ON CONFLICT (key) DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS sessions (
   token      text PRIMARY KEY,

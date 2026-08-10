@@ -4,9 +4,9 @@
 // ============================================================
 import { esc } from '../core/dom.js';
 import { fmt, fmt0 } from '../core/format.js';
-import { orderChip } from '../ui.js';
+import { orderChip, chip } from '../ui.js';
 import { franchiseScope, frTag } from '../actions.js';
-import { ORG_CR, DEFAULT_CR } from '../data/constants.js';
+import { ORG_CR, DEFAULT_CR, CLIENT_TYPE_STYLE, STAFF_ROLE_LABEL } from '../data/constants.js';
 import { PRODUCTS } from '../data/products.js';
 
 function kpiCard(k) {
@@ -185,7 +185,147 @@ function sideColumn(st) {
   return parts.join('');
 }
 
+/** شريحة نوع العميل الموحّدة */
+export function typeChip(type, size = 9.5) {
+  return `<span style="display:inline-flex;align-items:center;height:22px;padding:0 9px;border-radius:999px;font-size:${size}px;font-weight:800;white-space:nowrap;${CLIENT_TYPE_STYLE[type] || CLIENT_TYPE_STYLE['مستقل']}">${esc(type || 'مستقل')}</span>`;
+}
+
+/** لوحة B2B الشاملة: نبض المنصة كاملة — عمليات، مال، منشآت، يوزرات */
+function renderB2bDash(st) {
+  const cnt = (s) => st.orders.filter((o) => o.st === s).length;
+  const openTk = st.tickets.filter((t) => t.st === 'open' || t.st === 'held').length;
+  const pendReqs = st.prodReqs.filter((r) => r.st === 'pend').length;
+  const pendNc = (st.newClients || []).filter((n) => n.st === 'pend').length;
+  const pendTu = (st.topupReqs || []).length;
+  const pendUsers = st.users.filter((u) => u.st === 'pend').length;
+
+  const kpis = [
+    { v: cnt('b2b'), l: 'قيد التجهيز', color: 'var(--c-blue)', go: 'orders' },
+    { v: cnt('hold'), l: 'طلبات معلقة', color: 'var(--c-warn)', go: 'orders' },
+    { v: cnt('ship'), l: 'قيد التوصيل', color: 'var(--c-purple)', go: 'orders' },
+    { v: openTk, l: 'تذاكر نواقص', color: 'var(--c-danger)', go: 'tickets' },
+    { v: pendTu, l: 'تعميدات مالية', color: 'var(--c-info)', go: 'fintu' },
+    { v: pendNc, l: 'عملاء جدد', color: 'var(--c-success)', go: 'newclients' },
+  ];
+
+  // خط سير الطلبات عبر المنصة كاملة
+  const pipe = [
+    { l: 'بانتظار تعميد المنشآت', c: '#8A94A3', n: cnt('ops') + cnt('purch') },
+    { l: 'قيد التجهيز لدى B2B', c: 'var(--c-blue)', n: cnt('b2b') },
+    { l: 'معلقة', c: 'var(--c-warn)', n: cnt('hold') },
+    { l: 'قيد التوصيل', c: 'var(--c-purple)', n: cnt('ship') },
+    { l: 'مكتملة', c: 'var(--c-success)', n: cnt('done') + cnt('short') },
+  ];
+  const pipeMax = Math.max(...pipe.map((p) => p.n), 1);
+
+  // قائمة العمل — كل ما يتطلب إجراء فريق B2B الآن
+  const queue = [
+    { n: cnt('b2b'), l: 'طلبات جاهزة للتجهيز والإرسال', go: 'orders' },
+    { n: pendTu, l: 'تحويلات بنكية بانتظار التعميد المالي', go: 'fintu' },
+    { n: openTk, l: 'تذاكر نواقص بانتظار الحل', go: 'tickets' },
+    { n: pendReqs, l: 'اقتراحات منتجات بانتظار التسعير', go: 'reqs' },
+    { n: pendNc, l: 'منشآت جديدة بانتظار المراجعة والاعتماد', go: 'newclients' },
+    { n: st.frs.filter((f) => f.st === 'new').length, l: 'ممنوحون بانتظار تعميد التفعيل', go: 'frs' },
+  ].filter((q) => q.n > 0);
+
+  // توزيع اليوزرات عبر منشآت المنصة
+  const roleCounts = {};
+  for (const c of st.clients) for (const s of (c.staff || [])) roleCounts[s.role] = (roleCounts[s.role] || 0) + 1;
+  const roleMax = Math.max(...Object.values(roleCounts), 1);
+  const roleColors = { owner: 'var(--c-purple)', ops: 'var(--c-info)', fin: 'var(--c-blue)', worker: '#8A94A3' };
+
+  const clientRows = st.clients.map((c) => {
+    const usersN = (c.staff || []).length;
+    return `
+      <div class="table-row clickable" style="padding:11px 18px" data-action="openClientProfile" data-arg="${c.id}">
+        <div style="flex:1.7;min-width:0">
+          <div style="font-size:12px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(c.name)}</div>
+          <div class="num" style="font-size:9.5px;color:var(--c-faint);margin-top:1px">${esc(c.cr)}</div>
+        </div>
+        <div style="flex:1">${typeChip(c.type)}</div>
+        <div class="num" style="flex:.9;font-size:12px;font-weight:700;color:var(--c-info)">${fmt0(c.bal)}</div>
+        <div class="num" style="flex:.9;font-size:12px;font-weight:700">${fmt0(c.spend)}</div>
+        <div style="flex:.6;font-size:11.5px;font-weight:800;color:var(--c-purple)"><span class="num">${usersN}</span> يوزر</div>
+        <div style="width:86px">${chip(c.st === 'ok' ? 'نشط' : 'موقوف', c.st === 'ok' ? 'chip-success' : 'chip-danger')}</div>
+      </div>`;
+  }).join('');
+
+  const b2bPrep = st.orders.filter((o) => o.st === 'b2b' || o.st === 'hold');
+
+  return `
+    <div class="kpi-grid" style="grid-template-columns:repeat(6,1fr)">${kpis.map(kpiCard).join('')}</div>
+    ${taskBanner(st)}
+    <div style="display:grid;grid-template-columns:1.4fr 1fr;gap:14px;margin-top:16px;align-items:start">
+      <div style="display:flex;flex-direction:column;gap:14px;min-width:0">
+        <div class="card card-pad">
+          <div class="card-title" style="margin-bottom:13px">خط سير الطلبات — المنصة كاملة</div>
+          <div style="display:flex;flex-direction:column;gap:11px">
+            ${pipe.map((p) => `
+              <div style="cursor:pointer" data-action="go" data-arg="orders">
+                <div class="flex" style="font-size:11px;font-weight:700"><div>${p.l}</div><div class="grow"></div><div class="num" style="color:var(--c-muted)">${p.n}</div></div>
+                <div class="progress" style="margin-top:5px"><div style="width:${Math.round(p.n / pipeMax * 100)}%;background:${p.c}"></div></div>
+              </div>`).join('')}
+          </div>
+        </div>
+        <div class="card" style="overflow:hidden">
+          <div class="flex-center" style="padding:15px 18px 10px">
+            <div class="grow">
+              <div class="card-title">كل منشآت المنصة</div>
+              <div style="font-size:10px;color:var(--c-muted);margin-top:2px">المحفظة والمشتريات واليوزرات — اضغط منشأة لملفها الكامل</div>
+            </div>
+            <div style="font-size:11px;font-weight:800;color:var(--c-info);cursor:pointer" data-action="go" data-arg="clients">الكل</div>
+          </div>
+          <div class="table-head" style="padding:8px 18px;border-top:1px solid var(--c-divider)">
+            <div style="flex:1.7">المنشأة</div><div style="flex:1">النوع</div><div style="flex:.9">المحفظة</div>
+            <div style="flex:.9">مشتريات يوليو</div><div style="flex:.6">اليوزرات</div><div style="width:86px">الحالة</div>
+          </div>
+          ${clientRows}
+        </div>
+        <div class="card" style="overflow:hidden">
+          <div class="flex-center" style="padding:15px 18px 10px">
+            <div class="card-title grow">قائمة التجهيز</div>
+            <div style="font-size:11px;font-weight:800;color:var(--c-info);cursor:pointer" data-action="go" data-arg="orders">الكل</div>
+          </div>
+          <div class="table-head" style="padding:8px 18px;border-top:1px solid var(--c-divider)">
+            <div style="flex:1.2">الطلب</div><div style="flex:1.6">مقدّم الطلب · الفرع</div><div style="flex:1">التاريخ</div><div style="width:150px">الحالة</div>
+          </div>
+          ${b2bPrep.map((o) => dashOrderRow(st, o)).join('')}
+          ${b2bPrep.length === 0 ? '<div style="padding:22px;text-align:center;font-size:11.5px;color:var(--c-muted)">قائمة التجهيز فارغة الآن.</div>' : ''}
+        </div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:14px">
+        <div class="card card-pad">
+          <div class="card-title" style="margin-bottom:12px">قائمة العمل — يتطلب إجراءك</div>
+          ${queue.length ? queue.map((q) => `
+            <div class="flex-center gap-10 clickable" style="padding:10px 4px;border-bottom:1px solid var(--c-divider);cursor:pointer" data-action="go" data-arg="${q.go}">
+              <div class="num" style="width:30px;height:30px;border-radius:10px;background:var(--c-info-bg);color:var(--c-info);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;flex:none">${q.n}</div>
+              <div class="grow" style="font-size:11.5px;font-weight:700;line-height:1.6">${q.l}</div>
+              <div style="font-size:10px;font-weight:800;color:var(--c-info)">فتح ←</div>
+            </div>`).join('') : '<div style="font-size:11.5px;color:var(--c-muted);padding:6px 0">لا إجراءات معلقة — كل شيء تحت السيطرة ✨</div>'}
+        </div>
+        ${pendUsers ? `
+          <div class="flex-center gap-10" style="padding:13px 16px;border-radius:14px;cursor:pointer;background:var(--c-warn-bg);border:1px solid var(--c-warn-border);color:var(--c-warn-deep)" data-action="go" data-arg="users">
+            <div style="width:8px;height:8px;border-radius:999px;background:currentColor;flex:none"></div>
+            <div class="grow" style="font-size:11.5px;font-weight:700;line-height:1.8">${pendUsers} يوزر بانتظار تفعيل حسابه — فعّله ليستطيع الدخول</div>
+          </div>` : ''}
+        <div class="card card-pad">
+          <div class="card-title" style="margin-bottom:4px">توزيع اليوزرات على المنصة</div>
+          <div style="font-size:10px;color:var(--c-muted);margin-bottom:12px">كل مستخدمي المنشآت حسب الدور — إدارتها من «الأنواع واليوزرات»</div>
+          <div style="display:flex;flex-direction:column;gap:11px">
+            ${['owner', 'ops', 'fin', 'worker'].map((r) => `
+              <div style="cursor:pointer" data-action="go" data-arg="roles">
+                <div class="flex" style="font-size:11px;font-weight:700"><div>${STAFF_ROLE_LABEL[r]}</div><div class="grow"></div><div class="num" style="color:var(--c-muted)">${roleCounts[r] || 0}</div></div>
+                <div class="progress" style="margin-top:5px"><div style="width:${Math.round((roleCounts[r] || 0) / roleMax * 100)}%;background:${roleColors[r]}"></div></div>
+              </div>`).join('')}
+          </div>
+        </div>
+        ${sideColumn(st)}
+      </div>
+    </div>`;
+}
+
 export function renderDashboard(st) {
+  if (st.role === 'b2b') return renderB2bDash(st);
   const b2bPrep = st.orders.filter((o) => o.st === 'b2b' || o.st === 'hold');
   const listOrders = st.role === 'b2b' ? b2bPrep : st.orders.slice(0, 5);
 

@@ -7,7 +7,7 @@ import { esc, ICONS } from '../core/dom.js';
 import { fmt, fmt0 } from '../core/format.js';
 import { chip, orderChip, prodThumb, closeBtn, input, stepper, mapSvgLarge, mapPinAt, pinIcon } from '../ui.js';
 import { findOrder, locFromPin, orderTotal } from '../actions.js';
-import { FRANCHISEE_STATUS, ROLES } from '../data/constants.js';
+import { FRANCHISEE_STATUS, ROLES, CLIENT_TYPES, CLIENT_TYPE_SUB, CATEGORIES } from '../data/constants.js';
 import { PRODUCT_MAP, PRODUCTS } from '../data/products.js';
 import { showPricesFor } from '../pages/catalog.js';
 import { ticketChip } from '../pages/b2b.js';
@@ -691,8 +691,134 @@ function mapPickModal(st) {
     </div>`;
 }
 
+// ---------- v5: إنشاء عميل (بأنواعه الأربعة) ----------
+function clientNewModal(st) {
+  const granters = st.clients.filter((c) => c.type === 'مانح');
+  const needsGranter = ['ممنوح بيسك', 'ممنوح سوبر'].includes(st.cnType);
+  const ready = (st.cnName || '').trim() && (st.cnCr || '').trim()
+    && (!needsGranter || st.cnGranter || granters.length === 0)
+    && (st.cnType !== 'ممنوح سوبر' || (st.cnRegion || '').trim());
+  return `
+    <div style="padding:20px 22px 22px;overflow-y:auto;min-height:0">
+      <div class="flex-center gap-8">
+        <div class="modal-title grow">إنشاء عميل جديد</div>
+        ${closeBtn()}
+      </div>
+      <div class="field-label">اسم المنشأة</div>
+      ${input('cnName', st.cnName, 'مثال: مطاعم الساحل الغربي', {})}
+      <div class="flex gap-9">
+        <div class="grow">
+          <div class="field-label">السجل التجاري</div>
+          ${input('cnCr', st.cnCr, '4030-000000', { dir: 'ltr' })}
+        </div>
+        <div class="grow">
+          <div class="field-label">المدينة</div>
+          ${input('cnCity', st.cnCity, 'الرياض', {})}
+        </div>
+      </div>
+      <div class="field-label">نوع العميل</div>
+      <div style="display:flex;flex-direction:column;gap:7px">
+        ${CLIENT_TYPES.map((t) => `
+          <div class="flex-center gap-10 clickable" style="border:1.5px solid ${st.cnType === t ? 'var(--c-purple)' : 'var(--c-divider)'};background:${st.cnType === t ? 'var(--c-purple-soft)' : '#fff'};border-radius:12px;padding:10px 13px;cursor:pointer" data-action="setCnType" data-arg="${t}">
+            <div style="width:16px;height:16px;border-radius:999px;border:5px solid ${st.cnType === t ? 'var(--c-purple)' : '#D8D4E2'};flex:none"></div>
+            <div class="grow">
+              <div style="font-size:12px;font-weight:800">${t}</div>
+              <div style="font-size:9.5px;color:var(--c-muted);margin-top:1px;line-height:1.6">${CLIENT_TYPE_SUB[t]}</div>
+            </div>
+          </div>`).join('')}
+      </div>
+      ${needsGranter ? `
+        <div class="field-label">المانح المرتبط (إلزامي)</div>
+        ${granters.length ? `
+          <div class="flex gap-7 wrap">
+            ${granters.map((g) => `
+              <div style="height:34px;display:inline-flex;align-items:center;padding:0 14px;border-radius:999px;font-size:11px;font-weight:800;cursor:pointer;${st.cnGranter === g.id ? 'background:var(--c-purple);color:#fff' : 'background:#fff;color:var(--c-muted);border:1px solid var(--c-card-border)'}" data-action="setCnGranter" data-arg="${g.id}">${esc(g.name)}</div>`).join('')}
+          </div>`
+          : '<div style="font-size:10.5px;color:var(--c-warn-deep);background:var(--c-warn-bg);border:1px dashed var(--c-warn-border);border-radius:10px;padding:9px 13px">لا يوجد مانح مسجّل بعد — أنشئ عميلًا من نوع «مانح» أولًا وسيُربط لاحقًا.</div>'}` : ''}
+      ${st.cnType === 'ممنوح سوبر' ? `
+        <div class="field-label">منطقة الامتياز (إلزامي)</div>
+        ${input('cnRegion', st.cnRegion, 'مثال: المنطقة الغربية', {})}` : ''}
+      <div class="flex gap-9" style="margin-top:16px">
+        <button class="btn btn-primary grow ${ready ? '' : 'disabled'}" data-action="createClient">إنشاء العميل</button>
+        <button class="btn btn-ghost" style="padding:0 18px;font-size:12px" data-action="closeAll">إلغاء</button>
+      </div>
+      <div style="font-size:9.5px;color:var(--c-faint);margin-top:8px;line-height:1.8">يُنشأ الحساب بحد ائتماني افتتاحي 20,000 ر.س ومحفظة نشطة — الممنوحون يظهرون أيضًا في شبكة الفرنشايز لتعميدهم.</div>
+    </div>`;
+}
+
+// ---------- v5: إضافة منتج لكتالوج العميل (سعر خاص) ----------
+function clProdAddModal(st) {
+  const c = st.clients.find((x) => x.id === st.clientSel) || { name: '' };
+  const mine = new Set((st.clientProds || []).filter((x) => x.clientId === st.clientSel).map((x) => x.pid));
+  const q = (st.cpSearch || '').trim();
+  const list = PRODUCTS.filter((p) => !mine.has(p.id) && (!q || p.name.includes(q) || p.id.includes(q))).slice(0, 30);
+  return `
+    <div style="padding:20px 22px 22px;overflow-y:auto;min-height:0">
+      <div class="flex-center gap-8">
+        <div class="grow">
+          <div class="modal-title">إضافة من كتالوج B2B</div>
+          <div style="font-size:10px;color:var(--c-muted);margin-top:2px">لكتالوج «${esc(c.name)}» — يُسعَّر تلقائيًا بخصم الاتفاق ٥٪ وتعدّله بعدها</div>
+        </div>
+        ${closeBtn()}
+      </div>
+      <div class="flex-center gap-8" style="height:44px;border:1.5px solid var(--c-card-border);border-radius:12px;background:#fff;padding:0 12px;margin-top:12px">
+        ${ICONS.search('#a8a4b8', 15)}
+        <input data-input="cpSearch" data-key="cpSearch" value="${esc(st.cpSearch || '')}" placeholder="ابحث بالاسم أو الرمز…" style="flex:1;border:none;outline:none;font-size:12px;background:transparent">
+      </div>
+      <div style="border:1px solid var(--c-divider);border-radius:13px;overflow:hidden;max-height:320px;overflow-y:auto;margin-top:10px">
+        ${list.map((p) => `
+          <div class="flex-center gap-10" style="padding:9px 13px;border-bottom:1px solid #F7F5FA">
+            ${prodThumb(p, 38)}
+            <div class="grow" style="min-width:0">
+              <div style="font-size:11.5px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(p.name)}</div>
+              <div style="font-size:9.5px;color:var(--c-faint);margin-top:1px">${esc(p.unit)} · <span class="num">${fmt(p.price)}</span> ر.س</div>
+            </div>
+            <button class="btn btn-purple btn-xs" style="height:30px;border-radius:9px" data-action="clProdAdd" data-arg="${p.id}">إضافة</button>
+          </div>`).join('')}
+        ${list.length === 0 ? '<div style="padding:18px;font-size:11px;color:var(--c-faint);text-align:center">لا نتائج — كل المنتجات المطابقة مضافة مسبقًا.</div>' : ''}
+      </div>
+    </div>`;
+}
+
+// ---------- v5: إضافة منتج للكتالوج الأساسي ----------
+function cadNewModal(st) {
+  const ready = (st.cadnName || '').trim() && Number(st.cadnPrice) > 0;
+  return `
+    <div style="padding:20px 22px 22px;overflow-y:auto;min-height:0">
+      <div class="flex-center gap-8">
+        <div class="modal-title grow">إضافة منتج للكتالوج الأساسي</div>
+        ${closeBtn()}
+      </div>
+      <div class="field-label">اسم المنتج</div>
+      ${input('cadnName', st.cadnName, 'مثال: زيت زيتون بكر — عبوة 4 لتر', {})}
+      <div class="flex gap-9">
+        <div class="grow">
+          <div class="field-label">الوحدة</div>
+          ${input('cadnUnit', st.cadnUnit, 'كرتون / حبة / كيس…', {})}
+        </div>
+        <div class="grow">
+          <div class="field-label">السعر الأساسي (ر.س)</div>
+          ${input('cadnPrice', st.cadnPrice, '0.00', { dir: 'ltr' })}
+        </div>
+      </div>
+      <div class="field-label">القسم</div>
+      <div class="flex gap-7 wrap">
+        ${CATEGORIES.filter((x) => x !== 'الكل').map((x) => `
+          <div style="height:32px;display:inline-flex;align-items:center;padding:0 13px;border-radius:999px;font-size:10.5px;font-weight:800;cursor:pointer;${(st.cadnCat || 'مواد غذائية') === x ? 'background:var(--c-purple);color:#fff' : 'background:#fff;color:var(--c-muted);border:1px solid var(--c-card-border)'}" data-action="setCadnCat" data-arg="${x}">${x}</div>`).join('')}
+      </div>
+      <div class="flex gap-9" style="margin-top:16px">
+        <button class="btn btn-primary grow ${ready ? '' : 'disabled'}" data-action="cadCreate">إضافة المنتج</button>
+        <button class="btn btn-ghost" style="padding:0 18px;font-size:12px" data-action="closeAll">إلغاء</button>
+      </div>
+      <div style="font-size:9.5px;color:var(--c-faint);margin-top:8px;line-height:1.8">يظهر المنتج فورًا في كتالوج كل العملاء بالسعر الأساسي — الأسعار الخاصة تُدار من ملف كل عميل.</div>
+    </div>`;
+}
+
 const MODALS = {
   cart: cartModal,
+  cnNew: clientNewModal,
+  clProdAdd: clProdAddModal,
+  cadNew: cadNewModal,
   brDet: branchDetailModal,
   mapView: mapViewModal,
   mapPick: mapPickModal,

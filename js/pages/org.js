@@ -3,8 +3,10 @@
 // ============================================================
 import { esc, ICONS } from '../core/dom.js';
 import { fmt, fmt0 } from '../core/format.js';
-import { chip, input, ledgerAmount, emptyState, mapSvgSmall, mapPinAt, pinIcon } from '../ui.js';
+import { chip, input, ledgerAmount, emptyState, mapSvgSmall, mapPinAt, pinIcon, orderChip } from '../ui.js';
 import { ROLES, STAFF_ROLE_LABEL, STAFF_ROLE_CHIP, INVOICE_STATUS, FRANCHISEE_STATUS } from '../data/constants.js';
+import { PRODUCT_MAP } from '../data/products.js';
+import { typeChip } from './dashboard.js';
 
 // ---------- اليوزرات والصلاحيات ----------
 export function renderUsers(st) {
@@ -161,11 +163,128 @@ export function renderClientProfile(st) {
   const head = `
     <div class="flex-center gap-8">
       <button class="icon-btn" style="background:#fff;border:1px solid var(--c-card-border);width:42px;height:42px" data-action="backClients">${ICONS.chevronR()}</button>
-      <div class="grow" style="font-size:21px;font-weight:800;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(c.name)}</div>
+      <div style="font-size:21px;font-weight:800;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(c.name)}</div>
+      ${typeChip(c.type, 10)}
+      <div class="grow"></div>
       ${chip(susp ? 'حساب موقوف' : 'حساب نشط', susp ? 'chip-danger' : 'chip-info')}
       ${chip(frozen ? 'محفظة مجمدة' : 'محفظة نشطة', frozen ? 'chip-danger' : 'chip-success')}
     </div>
     <div style="font-size:11px;color:var(--c-muted);margin-top:3px">${esc(c.city)} · <span class="num">C.R. ${esc(c.cr)}</span></div>`;
+
+  // v5: بطاقة الملف التعريفي — كل بيانات المنشأة في نظرة
+  const pfField = (l, v) => `
+    <div>
+      <div style="font-size:9.5px;color:var(--c-faint);font-weight:700">${l}</div>
+      <div style="font-size:12px;font-weight:800;margin-top:3px">${v}</div>
+    </div>`;
+  const profileCard = `
+    <div class="card card-pad mt-16">
+      <div class="card-title" style="margin-bottom:13px">الملف التعريفي</div>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px">
+        ${pfField('نوع العميل', typeChip(c.type))}
+        ${pfField('السجل التجاري', `<span class="num">${esc(c.cr)}</span>`)}
+        ${pfField('المدينة', esc(c.city))}
+        ${pfField('الفروع', `<span class="num">${c.branches.length}</span> فروع`)}
+        ${pfField('اليوزرات', `<span class="num">${c.staff.length}</span> مستخدمين`)}
+        ${pfField('الحد الائتماني', `<span class="num">${fmt0(c.limit)}</span> ر.س`)}
+        ${pfField('المستخدم من الحد', `<span class="num" style="color:var(--c-warn-deep)">${fmt0(c.used)}</span> ر.س`)}
+        ${pfField('حالة المحفظة', chip(frozen ? 'مجمدة' : 'نشطة', frozen ? 'chip-danger' : 'chip-success'))}
+      </div>
+    </div>`;
+
+  // v5: كتالوج العميل وأسعاره الخاصة
+  const myProds = (st.clientProds || []).filter((x) => x.clientId === c.id).map((x) => ({ ...x, p: PRODUCT_MAP[x.pid] })).filter((x) => x.p);
+  const prodsSection = `
+    <div class="card mt-16" style="overflow:hidden">
+      <div class="flex-center gap-8" style="padding:15px 18px 11px">
+        <div class="grow">
+          <div class="card-title">منتجاتي — كتالوج العميل وأسعاره الخاصة (${myProds.length})</div>
+          <div style="font-size:10px;color:var(--c-muted);margin-top:2px">السعر الخاص المتفق عليه يتقدّم على سعر الكتالوج الأساسي</div>
+        </div>
+        <button class="btn btn-purple btn-sm" style="height:38px;border-radius:11px;font-size:11px" data-action="openClProdAdd">${ICONS.plus('#fff', 12, 2.6)} إضافة من كتالوج B2B</button>
+      </div>
+      ${myProds.length ? `
+        <div class="table-head" style="padding:9px 18px;border-top:1px solid var(--c-divider)">
+          <div style="flex:1.6">المنتج</div><div style="flex:.8">الوحدة</div><div style="flex:.8">السعر الأساسي</div>
+          <div style="flex:1.2">السعر الخاص</div><div style="flex:.9">الفرق</div><div style="width:80px"></div>
+        </div>
+        ${myProds.map((x) => {
+          const diff = x.price - x.p.price;
+          return `
+          <div class="table-row" style="padding:10px 18px">
+            <div style="flex:1.6;min-width:0">
+              <div style="font-size:12px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(x.p.name)}</div>
+              <div class="num" style="font-size:9.5px;color:var(--c-faint);margin-top:1px">${x.pid}</div>
+            </div>
+            <div style="flex:.8;font-size:10.5px;color:var(--c-muted)">${esc(x.p.unit)}</div>
+            <div class="num" style="flex:.8;font-size:11.5px;color:var(--c-faint);text-decoration:line-through">${fmt(x.p.price)}</div>
+            <div style="flex:1.2">
+              <div class="flex-center gap-6">
+                <button class="btn" style="width:26px;height:26px;border-radius:8px;padding:0;background:var(--c-subtle);color:var(--c-purple);font-size:14px;font-weight:800" data-action="clProdStep" data-arg="${x.pid}|-1">−</button>
+                <div class="num" style="min-width:52px;text-align:center;font-size:12.5px;font-weight:700;color:var(--c-purple)">${fmt(x.price)}</div>
+                <button class="btn" style="width:26px;height:26px;border-radius:8px;padding:0;background:var(--c-purple);color:#fff;font-size:14px;font-weight:800" data-action="clProdStep" data-arg="${x.pid}|1">+</button>
+              </div>
+            </div>
+            <div style="flex:.9">${chip(`${diff <= 0 ? '' : '+'}${fmt(diff)}`, diff <= 0 ? 'chip-success' : 'chip-warn')}</div>
+            <div style="width:80px;display:flex;justify-content:flex-end">
+              <button class="btn btn-xs btn-danger-outline" style="border-width:1px" data-action="clProdDel" data-arg="${x.pid}">حذف</button>
+            </div>
+          </div>`;
+        }).join('')}`
+        : '<div style="padding:24px;text-align:center;font-size:11.5px;color:var(--c-faint);border-top:1px solid var(--c-divider)">لا أسعار خاصة بعد — أضف منتجات من كتالوج B2B وسعّرها باتفاق العميل.</div>'}
+    </div>`;
+
+  // v5: سجل طلبات العميل — العميل 1 بياناته الحية؛ البقية عيّنات حتمية
+  const kk2 = (c.id % 7) + 1;
+  const clOrders = c.id === 1 ? st.orders.slice(0, 5) : c.orders === 0 ? [] : [
+    { id: `ORD-2${430 + kk2 * 9}`, by: c.staff[0]?.name || '—', branch: c.branches[0]?.name || '—', date: 'اليوم', st: 'ship' },
+    { id: `ORD-2${410 + kk2 * 9}`, by: c.staff[0]?.name || '—', branch: c.branches[0]?.name || '—', date: `${10 + kk2} يوليو`, st: 'done' },
+  ];
+  const ordersSection = `
+    <div class="card mt-16" style="overflow:hidden">
+      <div class="card-title" style="padding:15px 18px 11px">سجل الطلبات — ${c.id === 1 ? clOrders.length : c.orders} طلب</div>
+      ${clOrders.length ? `
+        <div class="table-head" style="padding:9px 18px;border-top:1px solid var(--c-divider)">
+          <div style="flex:1.1">الطلب</div><div style="flex:1.6">مقدّم الطلب · الفرع</div><div style="flex:.9">التاريخ</div><div style="width:150px">الحالة</div>
+        </div>
+        ${clOrders.map((o) => `
+          <div class="table-row ${c.id === 1 ? 'clickable" data-action="openOrderDrawer" data-arg="' + o.id + '"' : '"'} style="padding:11px 18px">
+            <div class="num" style="flex:1.1;font-size:12px;font-weight:700">${o.id}</div>
+            <div style="flex:1.6;font-size:10.5px;color:var(--c-muted)">${esc(o.by)} · ${esc(o.branch)}</div>
+            <div style="flex:.9;font-size:10px;color:var(--c-faint)">${esc(o.date)}</div>
+            <div style="width:150px">${orderChip(o.st)}</div>
+          </div>`).join('')}`
+        : '<div style="padding:24px;text-align:center;font-size:11.5px;color:var(--c-faint);border-top:1px solid var(--c-divider)">لا طلبات بعد — يظهر السجل مع أول طلب عبر المنصة.</div>'}
+    </div>`;
+
+  // v5: سجل النشاط — خط زمني مشتق من أحدث أحداث العميل
+  const activity = c.id === 1
+    ? [
+        ...st.orders.slice(0, 2).map((o) => ({ dot: 'var(--c-info)', txt: `طلب ${o.id} — ${o.by} · ${o.branch}`, d: o.date })),
+        ...st.wallet.hist.slice(0, 2).map((h) => ({ dot: h.amt >= 0 ? 'var(--c-success)' : 'var(--c-warn)', txt: h.t, d: h.d })),
+      ]
+    : c.orders === 0 ? [] : [
+        { dot: 'var(--c-info)', txt: `طلب توريد جديد من ${c.branches[0]?.name || 'الفرع الرئيسي'}`, d: 'اليوم' },
+        { dot: 'var(--c-success)', txt: 'شحن محفظة بتحويل بنكي معمّد', d: `${18 + (kk2 % 3)} يوليو` },
+        { dot: 'var(--c-warn)', txt: 'حجز آجل على الحد الائتماني', d: `${12 + kk2} يوليو` },
+      ];
+  const activitySection = `
+    <div class="card card-pad mt-16">
+      <div class="card-title" style="margin-bottom:13px">سجل النشاط</div>
+      ${activity.length ? `
+        <div style="display:flex;flex-direction:column;gap:0">
+          ${activity.map((a, ai) => `
+            <div class="flex gap-11" style="position:relative;padding-bottom:${ai === activity.length - 1 ? 0 : 15}px">
+              ${ai === activity.length - 1 ? '' : '<div style="position:absolute;top:14px;right:4.5px;bottom:0;width:1.5px;background:var(--c-divider)"></div>'}
+              <div style="width:10px;height:10px;border-radius:999px;background:${a.dot};flex:none;margin-top:3px;position:relative"></div>
+              <div class="grow" style="min-width:0">
+                <div style="font-size:11.5px;font-weight:700;line-height:1.7">${esc(a.txt)}</div>
+                <div style="font-size:9.5px;color:var(--c-faint);margin-top:1px">${esc(a.d)}</div>
+              </div>
+            </div>`).join('')}
+        </div>`
+        : '<div style="font-size:11.5px;color:var(--c-faint)">لا نشاط مسجل بعد.</div>'}
+    </div>`;
 
   const stats = `
     <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:11px">
@@ -355,7 +474,9 @@ export function renderClientProfile(st) {
     <div style="padding-top:16px;max-width:920px">
       ${stats}
       ${walletView}
+      ${st.clWalletOpen ? '' : profileCard + prodsSection}
       ${mainView}
+      ${st.clWalletOpen ? '' : ordersSection + activitySection}
       <div class="flex gap-8 mt-14">
         <button class="btn grow ${frozen ? 'btn-success-solid' : 'btn-warn-outline'}" style="height:44px;border-radius:12px;font-size:12px" data-action="toggleClientWallet" data-arg="${c.id}">${frozen ? 'فك تجميد المحفظة' : 'تجميد المحفظة'}</button>
         <button class="btn grow ${susp ? 'btn-success-solid' : 'btn-danger-outline'}" style="height:44px;border-radius:12px;font-size:12px" data-action="toggleClientAccount" data-arg="${c.id}">${susp ? 'إعادة تفعيل الحساب' : 'إيقاف الحساب'}</button>

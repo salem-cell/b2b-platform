@@ -78,6 +78,13 @@ export function createInitialState() {
     clientSel: null, clientPrev: null, clWalletOpen: false, clStaffName: '', clStaffRole: 'worker', clBrName: '',
     clSubName: '', clSubCr: '', clBrLoc: null,
 
+    // v5: العملاء الجدد + إنشاء عميل + إدارة الكتالوج + كتالوج العميل + مصفوفة الأنواع
+    ncSel: null,                                    // طلب التسجيل المفتوح في صفحة المراجعة
+    cnName: '', cnCr: '', cnCity: '', cnType: 'مستقل', cnGranter: null, cnRegion: '',
+    cadSearch: '', cadCat: 'الكل',
+    cadnName: '', cadnUnit: '', cadnPrice: '', cadnCat: 'مواد غذائية',
+    cpSearch: '',                                   // بحث نافذة إضافة منتج لكتالوج العميل
+
     // الخرائط وتفاصيل الفروع
     brLoc: null,            // موقع الفرع الجديد المُثبّت (صفحة إدارة الفروع)
     mapPin: null,           // الدبوس الحالي في نافذة اختيار الموقع {x,y}
@@ -213,6 +220,46 @@ export function createInitialState() {
       { name: 'فرع العليا', city: 'الرياض', loc: { x: 55, y: 50, addr: 'حي العليا، الرياض', coords: '24.7050°N, 46.7540°E' } },
       { name: 'فرع الروضة', city: 'الرياض', loc: { x: 30, y: 85, addr: 'حي الروضة، الرياض', coords: '24.7785°N, 46.6840°E' } },
       { name: 'فرع النسيم', city: 'الرياض', loc: { x: 80, y: 40, addr: 'حي الملز، الرياض', coords: '24.6840°N, 46.8240°E' } },
+    ],
+
+    // v5: كتالوج العميل الخاص — أسعار متفق عليها لعميل «مطاعم البلدة»
+    clientProds: [
+      { clientId: 1, pid: 'P-1042', price: 43.5 },
+      { clientId: 1, pid: 'P-2210', price: 116 },
+      { clientId: 1, pid: 'P-5501', price: 27 },
+      { clientId: 6, pid: 'P-2210', price: 114.5 },
+    ],
+
+    // v5: طلبات تسجيل المنشآت الواردة من فورم «سجّل منشأتك»
+    newClients: [
+      { id: 'NC-503', name: 'مذاق الشرق للتموين', activity: 'تموين وضيافة', model: 'مستقل', city: 'الرياض', cities: 'الرياض · الخرج',
+        branchesN: 4, cr: '1010-556231', vat: '310556231400003', docs: ['السجل التجاري.pdf', 'شهادة الضريبة.pdf'],
+        mgrName: 'عبدالله السالم', mgrRole: 'مدير المشتريات', mgrContact: '055 611 2234 · a.salem@mathaq.sa',
+        cats: ['مواد غذائية', 'لحوم ودواجن', 'تغليف وتشغيل'], monthly: '45,000 – 60,000 ر.س',
+        payment: 'آجل 30 يومًا · الاستلام صباحًا 6–10', st: 'pend', date: 'اليوم 10:20' },
+      { id: 'NC-502', name: 'بيت الشاورما الحديث', activity: 'مطاعم وجبات سريعة', model: 'ممنوح بيسك', city: 'جدة', cities: 'جدة',
+        branchesN: 2, cr: '4030-771902', vat: '300771902100003', docs: ['السجل التجاري.pdf'],
+        mgrName: 'مروان خياط', mgrRole: 'المالك', mgrContact: '056 402 8871 · marwan@shawarma-h.sa',
+        cats: ['لحوم ودواجن', 'خضار وفواكه', 'صلصات وتوابل'], monthly: '18,000 – 25,000 ر.س',
+        payment: 'دفع فوري من المحفظة · الاستلام مساءً 4–8', st: 'pend', date: 'أمس 16:45' },
+      { id: 'NC-501', name: 'قهوة أول الصبح', activity: 'مقاهي مختصة', model: 'مستقل', city: 'الدمام', cities: 'الدمام · الخبر',
+        branchesN: 3, cr: '2050-334127', vat: '', docs: [],
+        mgrName: 'ريان الغامدي', mgrRole: 'مدير التشغيل', mgrContact: '053 998 7120 · rayan@morningcup.sa',
+        cats: ['ألبان وأجبان', 'مشروبات', 'تغليف وتشغيل'], monthly: '9,000 – 14,000 ر.س',
+        payment: 'آجل 14 يومًا · نافذتا استلام', st: 'ok', date: '14 يوليو' },
+    ],
+    ncSeq: 504,
+
+    // v5: مصفوفة الأنواع واليوزرات — الإصدار المنشور 1.0
+    // العلامات: on ممكّن كامل · part جزئي (حسب الفرع/السقف) · admin مدير الحساب · off غير متاح
+    rolesMatrix: [
+      { id: 1, ver: '1.0', note: 'الإصدار التأسيسي لصلاحيات الأنواع الأربعة', meta: 'نُشر 12 يوليو — فريق B2B', cur: true, draft: false,
+        cells: [
+          ['admin', 'on',  'on',  'part', 'on',  'off', 'off', 'off'],   // مستقل
+          ['admin', 'on',  'on',  'on',   'on',  'on',  'part', 'off'],  // مانح
+          ['admin', 'on',  'part', 'part', 'on', 'off', 'off', 'off'],   // ممنوح بيسك
+          ['admin', 'on',  'on',  'part', 'on',  'part', 'on', 'off'],   // ممنوح سوبر
+        ] },
     ],
 
     notifUnread: 2,

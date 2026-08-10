@@ -21,7 +21,7 @@ export default handler(async (req, res) => {
   const schema = readFileSync(join(process.cwd(), 'db', 'schema.sql'), 'utf8');
 
   if (body.reset) {
-    for (const t of ['sessions', 'seqs', 'notifs', 'saved_lists', 'branches', 'org_users', 'clients', 'frs', 'prod_reqs', 'tickets', 'invoices', 'wallet_tx', 'wallet', 'orders', 'products']) {
+    for (const t of ['sessions', 'seqs', 'notifs', 'saved_lists', 'branches', 'org_users', 'roles_matrix', 'new_clients', 'client_products', 'clients', 'frs', 'prod_reqs', 'tickets', 'invoices', 'wallet_tx', 'wallet', 'orders', 'products']) {
       await sql(`DROP TABLE IF EXISTS ${t} CASCADE`);
     }
   }
@@ -30,10 +30,37 @@ export default handler(async (req, res) => {
     await sql(stmt);
   }
 
-  const [{ count }] = await sql`SELECT count(*)::int AS count FROM products`;
-  if (count > 0) return send(res, 200, { ok: true, seeded: false, note: `البيانات موجودة (${count} منتج)` });
-
   const st = createInitialState();
+
+  // بذور v5 — تُزرع حتى على قاعدة قائمة، كلٌّ فقط إن كان جدوله فارغًا
+  const [{ count: rmCount }] = await sql`SELECT count(*)::int AS count FROM roles_matrix`;
+  if (!rmCount) {
+    for (const m of st.rolesMatrix) {
+      await sql`INSERT INTO roles_matrix (ver, note, meta, cells, cur, draft)
+                VALUES (${m.ver}, ${m.note}, ${m.meta}, ${JSON.stringify(m.cells)}, ${m.cur}, ${m.draft})`;
+    }
+  }
+  const [{ count: ncCount }] = await sql`SELECT count(*)::int AS count FROM new_clients`;
+  if (!ncCount) {
+    for (const r of st.newClients) {
+      await sql`INSERT INTO new_clients (id, name, activity, model, city, cities, branches_n, cr, vat, docs,
+                                         mgr_name, mgr_role, mgr_contact, cats, monthly, payment, st, date_label)
+                VALUES (${r.id}, ${r.name}, ${r.activity}, ${r.model}, ${r.city}, ${r.cities}, ${r.branchesN},
+                        ${r.cr}, ${r.vat}, ${JSON.stringify(r.docs)}, ${r.mgrName}, ${r.mgrRole}, ${r.mgrContact},
+                        ${JSON.stringify(r.cats)}, ${r.monthly}, ${r.payment}, ${r.st}, ${r.date})`;
+    }
+    await sql`UPDATE seqs SET val = ${st.ncSeq} WHERE key = 'nc'`;
+  }
+  const [{ count: cpCount }] = await sql`SELECT count(*)::int AS count FROM client_products`;
+  if (!cpCount) {
+    for (const cp of st.clientProds) {
+      await sql`INSERT INTO client_products (client_id, pid, price) VALUES (${cp.clientId}, ${cp.pid}, ${cp.price})
+                ON CONFLICT (client_id, pid) DO NOTHING`;
+    }
+  }
+
+  const [{ count }] = await sql`SELECT count(*)::int AS count FROM products`;
+  if (count > 0) return send(res, 200, { ok: true, seeded: false, note: `البيانات موجودة (${count} منتج) — بذور v5 مكتملة` });
 
   for (const p of PRODUCTS) {
     await sql`INSERT INTO products (id, name, unit, cat, price, h, img, is_out)

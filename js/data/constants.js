@@ -57,7 +57,7 @@ export const ROLES = {
   frz:    { name: 'الممنوح بيسك (فرنشايز)',   user: 'فهد المطيري',       ini: 'ف', org: 'مطاعم الريف الشمالي',       nav: ['dash', 'approvals', 'catalog', 'orders', 'wallet', 'users', 'branches', 'settings'] },
   frzs:   { name: 'الممنوح سوبر (فرنشايز)',   user: 'م. فيصل الدوسري',   ini: 'ف', org: 'الشرقية للفرنشايز — المنطقة الشرقية', nav: ['dash', 'approvals', 'catalog', 'orders', 'wallet', 'analytics', 'frs', 'users', 'branches', 'settings'] },
   fr:     { name: 'مانح الفرنشايز',           user: 'دوار السعادة',      ini: 'د', org: 'دوار السعادة',              nav: ['dash', 'analytics', 'frs', 'catalog', 'orders', 'wallet', 'reqs', 'users', 'branches', 'settings'] },
-  b2b:    { name: 'B2B — سوبر أدمن',          user: 'فريق العمليات B2B', ini: 'B', org: 'منصة B2B',                  nav: ['dash', 'orders', 'approvals', 'fintu', 'tickets', 'reqs', 'clients', 'cadmin', 'catalog', 'analytics', 'frs', 'users', 'branches'] },
+  b2b:    { name: 'B2B — سوبر أدمن',          user: 'فريق العمليات B2B', ini: 'B', org: 'منصة B2B',                  nav: ['dash', 'orders', 'approvals', 'fintu', 'tickets', 'reqs', 'clients', 'newclients', 'roles', 'cadmin', 'catalog', 'analytics', 'frs', 'users', 'branches'] },
 };
 
 /** معرف الممنوح السوبر في بيانات العينة (يملكه دور frzs) */
@@ -79,6 +79,8 @@ export const PAGES = {
   clients:   { label: 'العملاء',            p: 'M4 8.5A2 2 0 0 1 6 6.5h12a2 2 0 0 1 2 2V18a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z', p2: 'M9 6.5V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v1.5M4 12h16' },
   cadmin:    { label: 'إدارة الكتالوج',     p: 'M12 3.6 20 8v8l-8 4.4L4 16V8z', p2: 'M4 8l8 4.4L20 8M12 12.4V20' },
   fintu:     { label: 'التعميدات المالية',  p: 'M4 8A2.6 2.6 0 0 1 6.6 5.4h10.8A2.6 2.6 0 0 1 20 8v8a2.6 2.6 0 0 1-2.6 2.6H6.6A2.6 2.6 0 0 1 4 16z', p2: 'M8.6 12.2l2.2 2.2 4.4-4.6' },
+  newclients:{ label: 'العملاء الجدد',      p: 'M9.2 11.2a3.6 3.6 0 1 0 0-7.2 3.6 3.6 0 0 0 0 7.2zM3.6 19.6c0-3.1 2.5-5 5.6-5s5.6 1.9 5.6 5', p2: 'M17.6 8.2v5M15.1 10.7h5' },
+  roles:     { label: 'الأنواع واليوزرات',  p: 'M4.5 4.5h15v15h-15z', p2: 'M4.5 9.5h15M4.5 14.5h15M9.5 4.5v15M14.5 4.5v15' },
   users:     { label: 'اليوزرات والصلاحيات', p: 'M9.2 11.2a3.6 3.6 0 1 0 0-7.2 3.6 3.6 0 0 0 0 7.2zM3.6 19.6c0-3.1 2.5-5 5.6-5s5.6 1.9 5.6 5', p2: 'M16.5 8.5h5M19 6v5' },
   branches:  { label: 'إدارة فروعي',        p: 'M4 10 12 4l8 6', p2: 'M6 9.4V20h12V9.4M10 20v-5h4v5' },
   settings:  { label: 'الإعدادات',          p: 'M12 8.6a3.4 3.4 0 1 1 0 6.8 3.4 3.4 0 0 1 0-6.8z', p2: 'M12 3.6v2M12 18.4v2M3.6 12h2M18.4 12h2M6.1 6.1l1.4 1.4M16.5 16.5l1.4 1.4M6.1 17.9l1.4-1.4M16.5 7.5l1.4-1.4' },
@@ -119,3 +121,42 @@ export const CAN_PAY = ['owner', 'fin', 'frz', 'frzs', 'fr'];
 /** السجل التجاري المعروض حسب دور الجلسة (بيانات عيّنة) */
 export const ORG_CR = { frzs: '4030-140552', frz: '4030-102211' };
 export const DEFAULT_CR = '4030-118842';
+
+/** أنواع العملاء الأربعة + ستايل شريحة كل نوع */
+export const CLIENT_TYPES = ['مستقل', 'مانح', 'ممنوح بيسك', 'ممنوح سوبر'];
+export const CLIENT_TYPE_STYLE = {
+  'مستقل':      'background:#E8F7FA;color:#0E7E90;border:1px solid #BEE9F0',
+  'مانح':       'background:#654E92;color:#fff;border:1px solid #654E92',
+  'ممنوح بيسك': 'background:#F0EBFA;color:#654E92;border:1px solid #DCD2EE',
+  'ممنوح سوبر': 'background:linear-gradient(90deg,#1BC4DB,#654E92);color:#fff;border:none',
+};
+export const CLIENT_TYPE_SUB = {
+  'مستقل':      'منشأة تشتري لنفسها مباشرة من B2B',
+  'مانح':       'يملك علامة فرنشايز ويدير ممنوحيه وأسعارهم',
+  'ممنوح بيسك': 'ممنوح يتبع مانحًا ويطلب ضمن اتفاقيته',
+  'ممنوح سوبر': 'ممنوح بمنطقة امتياز يدير ممنوحين تابعين',
+};
+
+/** حالات طلبات تسجيل المنشآت الجديدة */
+export const NC_STATUS = {
+  pend: { label: 'قيد المراجعة',  chip: 'chip-warn' },
+  ok:   { label: 'معتمد — أُنشئ الحساب', chip: 'chip-success' },
+  no:   { label: 'مرفوض',        chip: 'chip-danger' },
+};
+
+/** علامات مصفوفة الأنواع واليوزرات: التسمية + ستايل الخلية */
+export const RM_MARKS = {
+  on:    { sym: '✓', tip: 'ممكّن كامل',            style: 'background:#E8F7FA;color:#0E7E90;border:1px solid #BEE9F0' },
+  part:  { sym: '◐', tip: 'جزئي — حسب الفرع/السقف', style: 'background:#F0EBFA;color:#654E92;border:1px solid #DCD2EE' },
+  admin: { sym: 'م', tip: 'مدير الحساب فقط',        style: 'background:#0E7E90;color:#fff;border:1px solid #0E7E90' },
+  off:   { sym: '—', tip: 'غير متاح',               style: 'background:transparent;color:#B9C2CE;border:1px dashed #D6DDE6' },
+};
+/** أعمدة المصفوفة: يوزرات المنشآت الثمانية */
+export const RM_COLS = ['مدير الحساب', 'مدير مشتريات', 'مدير عمليات', 'عامل/فرع', 'مدير مالية', 'مدير ممنوحين', 'تحليلات', 'إعدادات المنصة'];
+/** صفوف المصفوفة بترتيب الأنواع */
+export const RM_ROWS = [
+  { name: 'مستقل',      desc: 'منشأة تشتري لنفسها' },
+  { name: 'مانح',       desc: 'يدير علامة وممنوحين' },
+  { name: 'ممنوح بيسك', desc: 'يتبع مانحًا باتفاقية' },
+  { name: 'ممنوح سوبر', desc: 'منطقة امتياز وممنوحون تابعون' },
+];

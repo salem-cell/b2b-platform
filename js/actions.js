@@ -40,7 +40,7 @@ export function findOrder(id) {
 
 /** التنقل بين الصفحات (يغلق أي طبقة مفتوحة) */
 export function go(page) {
-  setState({ page, drawer: null, modal: null, notifOpen: false });
+  setState({ page, drawer: null, modal: null, notifOpen: false, ncSel: null });
 }
 
 export function closeAll() {
@@ -423,4 +423,74 @@ export function toggleNotif() { setState({ notifOpen: !getState().notifOpen }); 
 export function markAllRead() {
   setState({ notifUnread: 0, notifOpen: false });
   say('عُلّمت كل الإشعارات كمقروءة');
+}
+
+// ---------- v5: العملاء الجدد، إنشاء عميل، كتالوج العميل، مصفوفة الأنواع، إدارة الكتالوج ----------
+
+export function openClientNew() {
+  setState({ modal: { k: 'cnNew' }, cnName: '', cnCr: '', cnCity: '', cnType: 'مستقل', cnGranter: null, cnRegion: '' });
+}
+
+export async function createClient() {
+  const st = getState();
+  await run('clients.create', {
+    name: st.cnName, cr: st.cnCr, city: st.cnCity, type: st.cnType,
+    granterId: st.cnGranter, region: st.cnRegion,
+  }, { modal: null, page: 'clients' });
+}
+
+export async function ncApprove(id) {
+  await run('nc.approve', { id });
+}
+
+export async function ncReject(id) {
+  await run('nc.reject', { id });
+}
+
+export function openClProdAdd() {
+  setState({ modal: { k: 'clProdAdd' }, cpSearch: '' });
+}
+
+export async function clProdAdd(pid) {
+  await run('clients.prodAdd', { id: getState().clientSel, pid });
+}
+
+export async function clProdStep(arg) {
+  const [pid, d] = arg.split('|');
+  await run('clients.prodStep', { id: getState().clientSel, pid, delta: Number(d) });
+}
+
+export async function clProdDel(pid) {
+  await run('clients.prodDel', { id: getState().clientSel, pid });
+}
+
+export async function rmToggleCell(arg) {
+  const [r, c] = arg.split('|');
+  await run('roles.set', { row: Number(r), col: Number(c) });
+}
+
+export async function rmPublish() {
+  await run('roles.publish', {});
+}
+
+export async function rmDiscard() {
+  await run('roles.discard', {});
+}
+
+export async function cadStepPrice(arg) {
+  const [pid, d] = arg.split('|');
+  await run('products.setPrice', { pid, delta: Number(d) });
+}
+
+export async function cadDelete(pid) {
+  await run('products.delete', { pid });
+}
+
+export function openCadNew() {
+  setState({ modal: { k: 'cadNew' }, cadnName: '', cadnUnit: '', cadnPrice: '', cadnCat: 'مواد غذائية' });
+}
+
+export async function cadCreate() {
+  const st = getState();
+  await run('products.add', { name: st.cadnName, unit: st.cadnUnit, price: st.cadnPrice, cat: st.cadnCat }, { modal: null });
 }

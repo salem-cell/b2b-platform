@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>سجّل منشأتك — منصة B2B</title>
+  <link rel="icon" type="image/png" href="assets/logo-0.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Almarai:wght@300;400;700;800&family=Quicksand:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/tokens.css">
+  <link rel="stylesheet" href="css/base.css">
+  <style>
+    body { background: var(--c-bg); min-height: 100vh; }
+    .rg-wrap { max-width: 720px; margin: 0 auto; padding: 26px 18px 60px; }
+    .rg-hero { background: linear-gradient(135deg, #1BC4DB, #654E92); border-radius: 22px; color: #fff; padding: 30px 28px; }
+    .rg-hero h1 { font-size: 24px; font-weight: 800; margin: 0; }
+    .rg-hero p { font-size: 12.5px; opacity: .9; margin: 8px 0 0; line-height: 2; }
+    .rg-card { background: #fff; border: 1px solid var(--c-card-border, #EBE8F2); border-radius: 18px; padding: 22px; margin-top: 16px; }
+    .rg-sec { display: flex; align-items: center; gap: 9px; font-size: 14px; font-weight: 800; margin-bottom: 14px; }
+    .rg-sec .n { width: 27px; height: 27px; border-radius: 9px; background: #E8F7FA; color: #0E7E90; display: flex; align-items: center; justify-content: center; font-size: 12px; }
+    .rg-label { font-size: 10.5px; font-weight: 800; color: #7d7990; margin: 13px 0 6px; }
+    .rg-input { width: 100%; height: 46px; border: 1.5px solid #E4E1EC; border-radius: 12px; padding: 0 14px; font-family: inherit; font-size: 13px; outline: none; background: #fff; box-sizing: border-box; }
+    .rg-input:focus { border-color: #1BC4DB; }
+    .rg-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    @media (max-width: 560px) { .rg-grid2 { grid-template-columns: 1fr; } }
+    .rg-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+    .rg-chip { height: 36px; display: inline-flex; align-items: center; padding: 0 15px; border-radius: 999px; font-size: 11.5px; font-weight: 800; cursor: pointer; background: #fff; color: #7d7990; border: 1.5px solid #E4E1EC; user-select: none; }
+    .rg-chip.on { background: #654E92; color: #fff; border-color: #654E92; }
+    .rg-radio { display: flex; align-items: flex-start; gap: 10px; border: 1.5px solid #E4E1EC; border-radius: 13px; padding: 12px 14px; cursor: pointer; margin-bottom: 8px; }
+    .rg-radio.on { border-color: #654E92; background: #F5F2FB; }
+    .rg-radio .dot { width: 16px; height: 16px; border-radius: 999px; border: 5px solid #D8D4E2; flex: none; margin-top: 2px; }
+    .rg-radio.on .dot { border-color: #654E92; }
+    .rg-radio b { font-size: 12.5px; display: block; }
+    .rg-radio span { font-size: 10px; color: #7d7990; line-height: 1.7; }
+    .rg-btn { width: 100%; height: 52px; border: none; border-radius: 14px; background: linear-gradient(90deg, #1BC4DB, #654E92); color: #fff; font-family: inherit; font-size: 14.5px; font-weight: 800; cursor: pointer; margin-top: 20px; }
+    .rg-btn:disabled { opacity: .55; cursor: default; }
+    .rg-ok { background: #E9F8EE; border: 1px solid #BFE8CC; color: #1d7a3e; border-radius: 14px; padding: 16px 18px; font-size: 13px; font-weight: 700; line-height: 2; margin-top: 16px; display: none; }
+    .rg-err { background: #FDEEEE; border: 1px solid #F3C9C9; color: #B33; border-radius: 12px; padding: 11px 14px; font-size: 12px; font-weight: 700; margin-top: 12px; display: none; }
+    .rg-note { font-size: 10px; color: #a8a4b8; line-height: 1.9; margin-top: 10px; text-align: center; }
+  </style>
+</head>
+<body>
+  <div class="rg-wrap">
+    <div class="rg-hero">
+      <div style="display:flex;align-items:center;gap:12px">
+        <img src="assets/logo-0.png" alt="B2B" style="width:46px;height:46px;border-radius:12px;background:#fff;padding:5px;object-fit:contain" onerror="this.style.display='none'">
+        <div>
+          <h1>سجّل منشأتك في منصة B2B</h1>
+          <p>توريد موحّد لمطاعم ومقاهي وشبكات الفرنشايز — عبّئ الطلب ويراجعه فريقنا ويتواصل معك مسؤول حساب خلال يوم عمل.</p>
+        </div>
+      </div>
+    </div>
+
+    <form id="rgForm">
+      <div class="rg-card">
+        <div class="rg-sec"><div class="n">١</div> بيانات المنشأة</div>
+        <div class="rg-label">اسم المنشأة *</div>
+        <input class="rg-input" name="name" required placeholder="مثال: مطاعم الساحل الغربي">
+        <div class="rg-grid2">
+          <div>
+            <div class="rg-label">نوع النشاط</div>
+            <input class="rg-input" name="activity" placeholder="مطاعم / مقاهي / تموين…">
+          </div>
+          <div>
+            <div class="rg-label">عدد الفروع</div>
+            <input class="rg-input" name="branchesN" type="number" min="1" value="1" dir="ltr">
+          </div>
+        </div>
+        <div class="rg-grid2">
+          <div>
+            <div class="rg-label">المدينة الرئيسية</div>
+            <input class="rg-input" name="city" placeholder="الرياض">
+          </div>
+          <div>
+            <div class="rg-label">مدن التغطية</div>
+            <input class="rg-input" name="cities" placeholder="الرياض · الخرج">
+          </div>
+        </div>
+        <div class="rg-label">نموذج التشغيل</div>
+        <div id="rgModels"></div>
+      </div>
+
+      <div class="rg-card">
+        <div class="rg-sec"><div class="n">٢</div> البيانات النظامية</div>
+        <div class="rg-grid2">
+          <div>
+            <div class="rg-label">رقم السجل التجاري</div>
+            <input class="rg-input" name="cr" dir="ltr" placeholder="4030-000000">
+          </div>
+          <div>
+            <div class="rg-label">الرقم الضريبي (VAT)</div>
+            <input class="rg-input" name="vat" dir="ltr" placeholder="3xxxxxxxxxxxxx03">
+          </div>
+        </div>
+        <div class="rg-note" style="text-align:right">المستندات (السجل التجاري وشهادة الضريبة) يطلبها مسؤول الحساب بعد المراجعة الأولية.</div>
+      </div>
+
+      <div class="rg-card">
+        <div class="rg-sec"><div class="n">٣</div> مسؤول الحساب</div>
+        <div class="rg-grid2">
+          <div>
+            <div class="rg-label">الاسم *</div>
+            <input class="rg-input" name="mgrName" required placeholder="الاسم الثلاثي">
+          </div>
+          <div>
+            <div class="rg-label">الصفة</div>
+            <input class="rg-input" name="mgrRole" placeholder="مدير المشتريات / المالك…">
+          </div>
+        </div>
+        <div class="rg-label">الجوال والإيميل *</div>
+        <input class="rg-input" name="mgrContact" required placeholder="05x xxx xxxx · name@company.sa">
+      </div>
+
+      <div class="rg-card">
+        <div class="rg-sec"><div class="n">٤</div> احتياجات التوريد</div>
+        <div class="rg-label">الفئات المطلوبة</div>
+        <div class="rg-chips" id="rgCats"></div>
+        <div class="rg-grid2">
+          <div>
+            <div class="rg-label">متوسط المشتريات الشهرية</div>
+            <input class="rg-input" name="monthly" placeholder="مثال: 20,000 – 30,000 ر.س">
+          </div>
+          <div>
+            <div class="rg-label">الدفع ونوافذ الاستلام</div>
+            <input class="rg-input" name="payment" placeholder="آجل 30 يومًا · الاستلام صباحًا">
+          </div>
+        </div>
+        <button class="rg-btn" id="rgSubmit" type="submit">إرسال طلب التسجيل</button>
+        <div class="rg-err" id="rgErr"></div>
+        <div class="rg-note">بالإرسال توافق على شروط الاستخدام — يراجع فريق B2B الطلب ويُنشأ حسابك فور الاعتماد.</div>
+      </div>
+    </form>
+
+    <div class="rg-ok" id="rgOk"></div>
+  </div>
+
+  <script>
+    const MODELS = [
+      ['مستقل', 'منشأة تشتري لنفسها مباشرة من B2B'],
+      ['مانح', 'أملك علامة فرنشايز وأدير ممنوحين'],
+      ['ممنوح بيسك', 'ممنوح يتبع مانحًا ويطلب ضمن اتفاقيته'],
+      ['ممنوح سوبر', 'ممنوح بمنطقة امتياز يدير ممنوحين تابعين'],
+    ];
+    const CATS = ['مواد غذائية', 'لحوم ودواجن', 'ألبان وأجبان', 'خضار وفواكه', 'مشروبات', 'صلصات وتوابل', 'تغليف وتشغيل'];
+    let model = 'مستقل';
+    const cats = new Set();
+
+    const mWrap = document.getElementById('rgModels');
+    function drawModels() {
+      mWrap.innerHTML = MODELS.map(([m, sub]) =>
+        `<div class="rg-radio ${model === m ? 'on' : ''}" data-m="${m}"><div class="dot"></div><div><b>${m}</b><span>${sub}</span></div></div>`).join('');
+    }
+    mWrap.addEventListener('click', (e) => { const el = e.target.closest('[data-m]'); if (el) { model = el.dataset.m; drawModels(); } });
+    drawModels();
+
+    const cWrap = document.getElementById('rgCats');
+    function drawCats() {
+      cWrap.innerHTML = CATS.map((c) => `<div class="rg-chip ${cats.has(c) ? 'on' : ''}" data-c="${c}">${c}</div>`).join('');
+    }
+    cWrap.addEventListener('click', (e) => {
+      const el = e.target.closest('[data-c]');
+      if (el) { cats.has(el.dataset.c) ? cats.delete(el.dataset.c) : cats.add(el.dataset.c); drawCats(); }
+    });
+    drawCats();
+
+    document.getElementById('rgForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const f = new FormData(e.target);
+      const btn = document.getElementById('rgSubmit');
+      const err = document.getElementById('rgErr');
+      err.style.display = 'none';
+      btn.disabled = true; btn.textContent = 'جارٍ الإرسال…';
+      try {
+        const res = await fetch('/api/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: f.get('name'), activity: f.get('activity'), model,
+            city: f.get('city'), cities: f.get('cities'), branchesN: f.get('branchesN'),
+            cr: f.get('cr'), vat: f.get('vat'),
+            mgrName: f.get('mgrName'), mgrRole: f.get('mgrRole'), mgrContact: f.get('mgrContact'),
+            cats: [...cats], monthly: f.get('monthly'), payment: f.get('payment'),
+          }),
+        });
+        const j = await res.json();
+        if (!res.ok) throw new Error(j.error || 'تعذر إرسال الطلب');
+        e.target.style.display = 'none';
+        const ok = document.getElementById('rgOk');
+        ok.textContent = `✅ ${j.msg}`;
+        ok.style.display = 'block';
+        ok.scrollIntoView({ behavior: 'smooth' });
+      } catch (ex) {
+        err.textContent = ex.message;
+        err.style.display = 'block';
+        btn.disabled = false; btn.textContent = 'إرسال طلب التسجيل';
+      }
+    });
+  </script>
+</body>
+</html>
