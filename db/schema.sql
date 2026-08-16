@@ -85,9 +85,15 @@ CREATE TABLE IF NOT EXISTS prod_reqs (
   note       text NOT NULL DEFAULT '—',
   date_label text NOT NULL,
   st         text NOT NULL,                   -- pend|priced|ok|no
-  price      numeric(12,2)                    -- سعر B2B المقترح (حالة priced)
+  price      numeric(12,2),                   -- سعر B2B المقترح (حالة priced)
+  kind       text NOT NULL DEFAULT 'prod',    -- prod: اقتراح منتج جديد | cat: طلب إضافة من الكتالوج (سلة)
+  items      jsonb,                           -- لطلبات السلة: [{pid, price?}] والسعر بعد تسعير B2B
+  client_id  bigint                           -- عميل مقدّم طلب السلة (تنزل الأسعار في كتالوجه)
 );
 ALTER TABLE prod_reqs ADD COLUMN IF NOT EXISTS price numeric(12,2);
+ALTER TABLE prod_reqs ADD COLUMN IF NOT EXISTS kind text NOT NULL DEFAULT 'prod';
+ALTER TABLE prod_reqs ADD COLUMN IF NOT EXISTS items jsonb;
+ALTER TABLE prod_reqs ADD COLUMN IF NOT EXISTS client_id bigint;
 
 -- طلبات شحن المحفظة بالتحويل البنكي (بانتظار تعميد B2B)
 CREATE TABLE IF NOT EXISTS topup_reqs (

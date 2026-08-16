@@ -814,11 +814,107 @@ function cadNewModal(st) {
     </div>`;
 }
 
+// ---------- v6: سلة إضافة منتجات من كتالوج B2B ----------
+function bktModal(st) {
+  const pids = Object.keys(st.bkt || {});
+  const rows = pids.map((pid) => {
+    const p = PRODUCT_MAP[pid];
+    if (!p) return '';
+    return `
+      <div class="flex-center gap-10" style="border:1px solid #F1EFF6;border-radius:13px;padding:9px 12px">
+        ${prodThumb(p, 40)}
+        <div class="grow" style="min-width:0">
+          <div style="font-size:11.5px;font-weight:800">${esc(p.name)}</div>
+          <div style="font-size:9.5px;color:var(--c-faint);margin-top:1px">${esc(p.unit)} · سعر الكتالوج <span class="num" style="font-weight:700">${fmt(p.price)}</span> ر.س</div>
+        </div>
+        <div style="width:28px;height:28px;border-radius:9px;border:1px solid #F3C4C4;display:flex;align-items:center;justify-content:center;cursor:pointer;flex:none" data-action="bktRm" data-arg="${pid}">${ICONS.close('#b23b3b', 10, 2.6)}</div>
+      </div>`;
+  }).join('');
+
+  return `
+    <div style="padding:20px 22px 22px;overflow-y:auto;min-height:0">
+      <div class="flex-center gap-8">
+        <div class="grow">
+          <div class="modal-title">سلة الإضافة — طلب منتجات من كتالوج B2B</div>
+          <div style="font-size:11px;color:var(--c-muted);margin-top:3px;line-height:1.8">يسعّر B2B كل منتج خصيصًا لمنشأتك، وبعد اعتمادك تنزل في «منتجاتي» بأسعارك الخاصة.</div>
+        </div>
+        ${closeBtn()}
+      </div>
+      <div style="max-height:44vh;overflow-y:auto;margin-top:12px;display:flex;flex-direction:column;gap:8px">${rows}</div>
+      ${pids.length === 0 ? '<div style="text-align:center;padding:22px;color:var(--c-faint);font-size:11.5px">السلة فارغة — أضف منتجات من «تصفح كتالوج B2B».</div>' : ''}
+      <div class="flex gap-9" style="margin-top:15px">
+        <button class="btn btn-primary grow ${pids.length ? '' : 'disabled'}" style="height:48px;border-radius:13px;font-size:13px" data-action="bktSend">إرسال طلب الإضافة لفريق B2B</button>
+        <button class="btn btn-ghost" style="width:110px;font-size:12.5px" data-action="closeAll">متابعة التصفح</button>
+      </div>
+    </div>`;
+}
+
+// ---------- v6: تسعير طلب إضافة من الكتالوج (B2B) ----------
+function rcpModal(st) {
+  const r = st.prodReqs.find((x) => x.id === st.modal.id);
+  if (!r) return '<div style="padding:22px">الطلب غير موجود.</div>';
+  const rows = (r.items || []).map((it) => {
+    const p = PRODUCT_MAP[it.pid] || { name: it.pid, unit: '', price: 0 };
+    const key = `rcp_${it.pid}`;
+    const val = st[key] != null ? st[key] : String(Math.round(p.price * 0.95 * 100) / 100);
+    return `
+      <div class="flex-center gap-10" style="border:1px solid #F1EFF6;border-radius:13px;padding:9px 12px">
+        <div class="grow" style="min-width:0">
+          <div style="font-size:11.5px;font-weight:800">${esc(p.name)}</div>
+          <div style="font-size:9.5px;color:var(--c-faint);margin-top:1px">${esc(p.unit)} · كتالوج B2B <span class="num" style="font-weight:700">${fmt(p.price)}</span> ر.س</div>
+        </div>
+        <input class="num" value="${esc(val)}" data-input="${key}" data-key="${key}" dir="ltr" inputmode="decimal"
+          style="width:84px;height:36px;text-align:center;font-size:13px;font-weight:700;color:var(--c-purple);border:1.5px solid var(--c-divider);border-radius:10px;outline:none;background:var(--c-subtle)">
+        <div style="font-size:9px;color:var(--c-faint);flex:none">ر.س</div>
+      </div>`;
+  }).join('');
+
+  return `
+    <div style="padding:20px 22px 22px;overflow-y:auto;min-height:0">
+      <div class="flex-center gap-8">
+        <div class="grow">
+          <div class="modal-title">تسعير طلب الإضافة <span class="num">${r.id}</span></div>
+          <div style="font-size:11px;color:var(--c-muted);margin-top:3px">${esc(r.by)} — حدد السعر الخاص لكل منتج، ثم يُرسل للعميل للاعتماد قبل نزوله في منتجاته.</div>
+        </div>
+        ${closeBtn()}
+      </div>
+      <div style="max-height:46vh;overflow-y:auto;margin-top:12px;display:flex;flex-direction:column;gap:8px">${rows}</div>
+      <div class="flex gap-9" style="margin-top:15px">
+        <button class="btn btn-primary grow" style="height:48px;border-radius:13px;font-size:13px" data-action="rcpConfirm" data-arg="${r.id}">إرسال الأسعار للعميل للاعتماد</button>
+        <button class="btn btn-ghost" style="width:110px;font-size:12.5px" data-action="closeAll">إلغاء</button>
+      </div>
+    </div>`;
+}
+
+// ---------- v6: صورة المنتج (إضافة / تغيير / إزالة) ----------
+function imgEditModal(st) {
+  const p = PRODUCT_MAP[st.imgPid] || { name: '', img: '' };
+  return `
+    <div style="padding:20px 22px 22px;overflow-y:auto;min-height:0">
+      <div class="flex-center gap-8">
+        <div class="modal-title grow">صورة «${esc(p.name)}»</div>
+        ${closeBtn()}
+      </div>
+      ${p.img ? `<img src="${esc(p.img)}" alt="" style="width:100%;height:150px;object-fit:cover;border-radius:13px;margin-top:12px;border:1px solid var(--c-divider)" onerror="this.style.display='none'">` : ''}
+      <div class="field-label">رابط الصورة (https)</div>
+      ${input('imgUrl', st.imgUrl, 'https://…', { dir: 'ltr' })}
+      <div class="flex gap-9" style="margin-top:15px">
+        <button class="btn btn-primary grow ${(st.imgUrl || '').trim().startsWith('https://') ? '' : 'disabled'}" data-action="imgSave">حفظ الصورة</button>
+        ${p.img ? `<button class="btn btn-danger-outline" style="padding:0 16px;font-size:12px" data-action="imgDelete" data-arg="${esc(st.imgPid)}">إزالة الصورة</button>` : ''}
+        <button class="btn btn-ghost" style="padding:0 16px;font-size:12px" data-action="closeAll">إلغاء</button>
+      </div>
+      <div style="font-size:9.5px;color:var(--c-faint);margin-top:8px;line-height:1.8">تظهر الصورة فورًا في كتالوج كل الأدوار — وعند تعذّر تحميلها تظهر الخلفية اللونية الاحتياطية.</div>
+    </div>`;
+}
+
 const MODALS = {
   cart: cartModal,
   cnNew: clientNewModal,
   clProdAdd: clProdAddModal,
   cadNew: cadNewModal,
+  bkt: bktModal,
+  rcp: rcpModal,
+  imgEdit: imgEditModal,
   brDet: branchDetailModal,
   mapView: mapViewModal,
   mapPick: mapPickModal,

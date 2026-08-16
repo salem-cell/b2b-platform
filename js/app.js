@@ -238,6 +238,18 @@ const ACTIONS = {
   cadCreate: () => A.cadCreate(),
   cadStepPrice: (el) => A.cadStepPrice(el.dataset.arg),
   cadDelete: (el) => A.cadDelete(el.dataset.arg),
+  cadCommitPrice: (el) => A.cadCommitPrice(el.dataset.arg),
+  openImgEdit: (el) => A.openImgEdit(el.dataset.arg),
+  imgSave: () => A.imgSave(),
+  imgDelete: (el) => A.imgDelete(el.dataset.arg),
+
+  // v6: سلة الإضافة من الكتالوج + تسعيرها لدى B2B
+  bktAdd: (el) => A.bktAdd(el.dataset.arg),
+  bktRm: (el) => A.bktRm(el.dataset.arg),
+  openBkt: () => setState({ modal: { k: 'bkt' } }),
+  bktSend: () => A.bktSend(),
+  openRcp: (el) => A.openRcp(el.dataset.arg),
+  rcpConfirm: (el) => A.rcpConfirm(el.dataset.arg),
 
   // v5: إنشاء عميل + كتالوج العميل الخاص
   openClientNew: () => A.openClientNew(),
@@ -382,4 +394,19 @@ root.addEventListener('input', (e) => {
   const field = el.dataset.input;
   const transform = INPUT_TRANSFORM[field];
   setState({ [field]: transform ? transform(el.value) : el.value });
+});
+
+// تثبيت بالقيمة المكتوبة: Enter (data-enter) أو مغادرة الحقل (data-blur)
+root.addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter') return;
+  const el = e.target.closest('[data-enter]');
+  if (!el) return;
+  const handler = ACTIONS[el.dataset.enter];
+  if (handler) { e.preventDefault(); el.blur(); }
+});
+root.addEventListener('focusout', (e) => {
+  const el = e.target.closest('[data-blur]');
+  if (!el) return;
+  const handler = ACTIONS[el.dataset.blur];
+  if (handler) handler(el, e);
 });

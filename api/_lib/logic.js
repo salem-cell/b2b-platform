@@ -368,6 +368,20 @@ async function reqsClientAccept(role, { id }) {
   const [r] = await sql`SELECT * FROM prod_reqs WHERE id = ${id}`;
   if (!r) throw httpError(404, 'الاقتراح غير موجود');
   if (r.st !== 'priced') throw httpError(400, 'الاقتراح ليس بانتظار اعتماد السعر');
+
+  // طلب سلة (v6): تنزل كل المنتجات في كتالوج العميل الخاص بالأسعار المتفق عليها
+  if (r.kind === 'cat') {
+    const cid = Number(r.client_id) || sessionClientId(role);
+    for (const it of r.items || []) {
+      if (it.price == null) continue;
+      await sql`INSERT INTO client_products (client_id, pid, price) VALUES (${cid}, ${it.pid}, ${Number(it.price)})
+                ON CONFLICT (client_id, pid) DO UPDATE SET price = ${Number(it.price)}`;
+    }
+    await sql`UPDATE prod_reqs SET st = 'ok' WHERE id = ${id}`;
+    await notify(['b2b'], 'اعتمادات', `اعتمد العميل أسعار طلب الإضافة ${id} — نزلت المنتجات في كتالوجه الخاص`);
+    return `اعتمدت الأسعار — نزلت ${(r.items || []).length} منتجات في «منتجاتي» بأسعارك الخاصة`;
+  }
+
   const [{ count }] = await sql`SELECT count(*)::int AS count FROM products`;
   const pid = `P-6${String(count).padStart(3, '0')}`;
   await sql`INSERT INTO products (id, name, unit, cat, price, h, img)
@@ -375,6 +389,50 @@ async function reqsClientAccept(role, { id }) {
   await sql`UPDATE prod_reqs SET st = 'ok' WHERE id = ${id}`;
   await notify(['b2b'], 'اعتمادات', `اعتمد العميل تسعير «${r.name}» — أُضيف للكتالوج`);
   return `اعتمدت السعر — أُضيف «${r.name}» في منتجاتي فورًا`;
+}
+
+// ============ سلة الإضافة من الكتالوج (v6) ============
+
+/** العميل يرسل سلة منتجات من كتالوج B2B كطلب إضافة واحد */
+async function reqsBktSend(role, { pids }) {
+  if (!['owner', 'frz', 'frzs'].includes(role)) throw httpError(403, 'طلب الإضافة لمدير حساب المنشأة');
+  if (!Array.isArray(pids) || !pids.length) throw httpError(400, 'السلة فارغة — أضف منتجات من كتالوج B2B أولًا');
+  const cid = sessionClientId(role);
+  const pm = await productMap();
+
+  // استبعاد ما هو ضمن كتالوج العميل مسبقًا أو ضمن طلب إضافة مفتوح
+  const mine = new Set((await sql`SELECT pid FROM client_products WHERE client_id = ${cid}`).map((x) => x.pid));
+  const open = await sql`SELECT items FROM prod_reqs WHERE kind = 'cat' AND client_id = ${cid} AND st IN ('pend', 'priced')`;
+  for (const o of open) for (const it of o.items || []) mine.add(it.pid);
+  const clean = [...new Set(pids)].filter((p) => pm[p] && !mine.has(p));
+  if (!clean.length) throw httpError(400, 'كل منتجات السلة ضمن كتالوجك أو بطلب سابق بانتظار B2B');
+
+  const seq = await nextSeq('req');
+  const id = `REQ-${seq}`;
+  const names = clean.slice(0, 3).map((p) => pm[p].name).join('، ');
+  await sql`INSERT INTO prod_reqs (id, name, unit, by_org, by_user, note, date_label, st, kind, items, client_id)
+            VALUES (${id}, ${`طلب إضافة من الكتالوج — ${clean.length} منتجات`}, '', ${ROLES[role].org}, ${ROLES[role].user},
+                    ${`${names}${clean.length > 3 ? '…' : ''}`}, 'الآن', 'pend', 'cat',
+                    ${JSON.stringify(clean.map((p) => ({ pid: p })))}, ${cid})`;
+  await notify(['b2b'], 'اعتمادات', `طلب إضافة من الكتالوج ${id} — ${clean.length} منتجات من ${ROLES[role].org} بانتظار تسعيرك`);
+  return `أُرسل طلب الإضافة ${id} (${clean.length} منتجات) — يسعّره B2B ثم تعتمد الأسعار لتنزل في منتجاتك`;
+}
+
+/** B2B يسعّر كل منتج في طلب السلة ويعيده للعميل للاعتماد */
+async function reqsRcpConfirm(role, { id, prices }) {
+  if (role !== 'b2b') throw httpError(403, 'تسعير طلبات الإضافة صلاحية B2B');
+  const [r] = await sql`SELECT * FROM prod_reqs WHERE id = ${id}`;
+  if (!r) throw httpError(404, 'الطلب غير موجود');
+  if (r.kind !== 'cat') throw httpError(400, 'هذا ليس طلب إضافة من الكتالوج');
+  const pm = await productMap();
+  const items = (r.items || []).map((it) => {
+    const p = Number(prices?.[it.pid]);
+    const val = p > 0 && p <= 100000 ? Math.round(p * 100) / 100 : Math.round(pm[it.pid].price * (1 - 0.05) * 100) / 100;
+    return { pid: it.pid, price: val };
+  });
+  await sql`UPDATE prod_reqs SET st = 'priced', items = ${JSON.stringify(items)} WHERE id = ${id}`;
+  await notify(['owner', 'fin', 'frz', 'frzs', 'fr'], 'اعتمادات', `سعّر B2B طلب الإضافة ${id} — راجع الأسعار الخاصة واعتمدها لتنزل في منتجاتك`);
+  return `أُرسلت الأسعار الخاصة لطلب ${id} للعميل للاعتماد`;
 }
 
 async function reqsClientDecline(role, { id }) {
@@ -610,6 +668,33 @@ async function productsSetPrice(role, { pid, delta }) {
   return `سعر «${p.name}» الأساسي الآن ${fmt(p.price)} ر.س — مرجع تسعير كل العملاء`;
 }
 
+/** v6: كتابة السعر الأساسي مباشرة (حقل الإدخال في إدارة الكتالوج) */
+async function productsSetPriceVal(role, { pid, price }) {
+  if (role !== 'b2b') throw httpError(403, 'تسعير الكتالوج صلاحية B2B');
+  const p = Math.round(Number(price) * 100) / 100;
+  if (!(p > 0 && p <= 100000)) throw httpError(400, 'أدخل سعرًا صالحًا');
+  const [row] = await sql`UPDATE products SET price = ${p} WHERE id = ${pid} RETURNING name`;
+  if (!row) throw httpError(404, 'المنتج غير موجود');
+  return `سعر «${row.name}» الأساسي الآن ${fmt(p)} ر.س — مرجع تسعير كل العملاء`;
+}
+
+/** v6: إضافة / تغيير صورة المنتج (رابط صورة) */
+async function productsSetImg(role, { pid, img }) {
+  if (role !== 'b2b') throw httpError(403, 'إدارة الكتالوج صلاحية B2B');
+  const url = String(img || '').trim();
+  if (!/^https:\/\/.+/.test(url) || url.length > 500) throw httpError(400, 'ألصق رابط صورة صحيحًا يبدأ بـ https://');
+  const [row] = await sql`UPDATE products SET img = ${url} WHERE id = ${pid} RETURNING name`;
+  if (!row) throw httpError(404, 'المنتج غير موجود');
+  return `حُدّثت صورة «${row.name}» — تظهر فورًا في كتالوج كل العملاء`;
+}
+
+async function productsDelImg(role, { pid }) {
+  if (role !== 'b2b') throw httpError(403, 'إدارة الكتالوج صلاحية B2B');
+  const [row] = await sql`UPDATE products SET img = '' WHERE id = ${pid} RETURNING name`;
+  if (!row) throw httpError(404, 'المنتج غير موجود');
+  return `أُزيلت صورة «${row.name}» — تظهر خلفيته اللونية الاحتياطية`;
+}
+
 async function productsAdd(role, { name, unit, price, cat }) {
   if (role !== 'b2b') throw httpError(403, 'إدارة الكتالوج صلاحية B2B');
   const n = (name || '').trim();
@@ -721,6 +806,8 @@ export const COMMANDS = {
   'reqs.clientAccept': reqsClientAccept,
   'reqs.clientDecline': reqsClientDecline,
   'reqs.reject': reqsReject,
+  'reqs.bktSend': reqsBktSend,
+  'reqs.rcpConfirm': reqsRcpConfirm,
   'frs.create': frsCreate,
   'frs.approve': frsApprove,
   'frs.toggle': frsToggle,
@@ -739,6 +826,9 @@ export const COMMANDS = {
   'roles.discard': rolesDiscard,
   'products.toggle': productsToggle,
   'products.setPrice': productsSetPrice,
+  'products.setPriceVal': productsSetPriceVal,
+  'products.setImg': productsSetImg,
+  'products.delImg': productsDelImg,
   'products.add': productsAdd,
   'products.delete': productsDelete,
   'users.add': usersAdd,

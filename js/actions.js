@@ -494,3 +494,72 @@ export async function cadCreate() {
   const st = getState();
   await run('products.add', { name: st.cadnName, unit: st.cadnUnit, price: st.cadnPrice, cat: st.cadnCat }, { modal: null });
 }
+
+// ---------- v6: سلة الإضافة من الكتالوج + تسعيرها + إدارة سعر/صورة المنتج ----------
+
+export function bktAdd(pid) {
+  setState({ bkt: { ...(getState().bkt || {}), [pid]: true } });
+  say('أُضيف للسلة — راجعها من الشريط أسفل الكتالوج');
+}
+
+export function bktRm(pid) {
+  const bkt = { ...(getState().bkt || {}) };
+  delete bkt[pid];
+  setState({ bkt });
+}
+
+export async function bktSend() {
+  const st = getState();
+  const pids = Object.keys(st.bkt || {});
+  if (!pids.length) { say('السلة فارغة — أضف منتجات أولًا'); return; }
+  await run('reqs.bktSend', { pids }, { modal: null, bkt: {} });
+}
+
+/** B2B يفتح نافذة تسعير طلب السلة — تُهيّأ الأسعار بخصم الاتفاق ٥٪ */
+export function openRcp(id) {
+  const r = getState().prodReqs.find((x) => x.id === id);
+  if (!r) return;
+  const pre = {};
+  for (const it of r.items || []) {
+    const p = PRODUCT_MAP[it.pid];
+    pre[`rcp_${it.pid}`] = String(Math.round((p ? p.price * 0.95 : 0) * 100) / 100);
+  }
+  setState({ modal: { k: 'rcp', id }, ...pre });
+}
+
+export async function rcpConfirm(id) {
+  const st = getState();
+  const r = st.prodReqs.find((x) => x.id === id);
+  if (!r) return;
+  const prices = {};
+  for (const it of r.items || []) {
+    const v = parseFloat(st[`rcp_${it.pid}`]);
+    if (v > 0) prices[it.pid] = Math.round(v * 100) / 100;
+  }
+  await run('reqs.rcpConfirm', { id, prices }, { modal: null });
+}
+
+/** كتابة السعر الأساسي مباشرة في إدارة الكتالوج (Enter أو مغادرة الحقل) */
+export async function cadCommitPrice(pid) {
+  const st = getState();
+  const key = `cadP_${pid}`;
+  const raw = st[key];
+  if (raw == null) return;
+  const cur = (PRODUCT_MAP[pid] || {}).price;
+  const v = parseFloat(String(raw).replace(/[^0-9.]/g, ''));
+  if (!(v > 0) || Math.abs(v - cur) < 0.005) { setState({ [key]: null }); return; }
+  await run('products.setPriceVal', { pid, price: Math.round(v * 100) / 100 }, { [key]: null });
+}
+
+export function openImgEdit(pid) {
+  setState({ modal: { k: 'imgEdit' }, imgPid: pid, imgUrl: (PRODUCT_MAP[pid] || {}).img || '' });
+}
+
+export async function imgSave() {
+  const st = getState();
+  await run('products.setImg', { pid: st.imgPid, img: st.imgUrl }, { modal: null, imgUrl: '' });
+}
+
+export async function imgDelete(pid) {
+  await run('products.delImg', { pid: pid || getState().imgPid }, { modal: null, imgUrl: '' });
+}

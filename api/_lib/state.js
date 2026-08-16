@@ -62,7 +62,11 @@ export async function snapshot() {
       val: Number(t.val), st: t.st, date: t.date_label,
       ...(t.cn ? { cn: t.cn } : {}), ...(t.hold_reason ? { holdReason: t.hold_reason } : {}),
     })),
-    prodReqs: prodReqs.map((r) => ({ id: r.id, name: r.name, unit: r.unit, by: r.by_org, user: r.by_user, note: r.note, date: r.date_label, st: r.st, ...(r.price != null ? { price: Number(r.price) } : {}) })),
+    prodReqs: prodReqs.map((r) => ({
+      id: r.id, name: r.name, unit: r.unit, by: r.by_org, user: r.by_user, note: r.note, date: r.date_label, st: r.st,
+      ...(r.price != null ? { price: Number(r.price) } : {}),
+      ...(r.kind === 'cat' ? { kind: 'cat', items: (r.items || []).map((it) => ({ pid: it.pid, ...(it.price != null ? { price: Number(it.price) } : {}) })), clientId: r.client_id == null ? undefined : Number(r.client_id) } : {}),
+    })),
     topupReqs: topupReqs.map((r) => ({ id: r.id, org: r.org, by: r.by_user, amt: r.amt, proof: r.proof, date: r.date_label })),
     frs: frs.map((f) => ({ ...f, parent: f.parent == null ? undefined : Number(f.parent), id: Number(f.id) })),
     clients: clients.map((c) => ({ id: Number(c.id), name: c.name, cr: c.cr, city: c.city, orders: c.orders, spend: c.spend, st: c.st, bal: c.bal, limit: c.cr_limit, used: c.used, wst: c.wst, branches: c.branches, staff: c.staff, type: clientType(c) })),
