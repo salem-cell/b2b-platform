@@ -2,7 +2,7 @@
 import { sql, SAMPLE_CR } from './db.js';
 
 export async function snapshot() {
-  const [products, orders, walletRows, txs, invoices, tickets, prodReqs, frs, clients, users, branches, lists, notifs, topupReqs, clientProds, newClients, rolesMatrix] =
+  const [products, orders, walletRows, txs, invoices, tickets, prodReqs, frs, clients, users, branches, lists, notifs, topupReqs, clientProds, newClients, rolesMatrix, finReqs, colFiles] =
     await Promise.all([
       sql`SELECT id, name, unit, cat, price::float, h, img, is_out FROM products ORDER BY id`,
       sql`SELECT * FROM orders ORDER BY created_at DESC`,
@@ -21,6 +21,8 @@ export async function snapshot() {
       sql`SELECT client_id, pid, price::float FROM client_products ORDER BY pid`,
       sql`SELECT * FROM new_clients ORDER BY created_at DESC`,
       sql`SELECT id, ver, note, meta, cells, cur, draft FROM roles_matrix ORDER BY id DESC`,
+      sql`SELECT id, client_id, kind, amt::float, months, to_date, note, st, file_id, date_label FROM fin_reqs ORDER BY created_at DESC`,
+      sql`SELECT id, client_id, inv, ref, amt::float, orig_amt::float, created, due, late_days, stage, promise, due_hist, log, st FROM col_files ORDER BY created_at DESC`,
     ]);
 
   const w = walletRows[0] || { bal: 0, cr_limit: 0, used: 0 };
@@ -78,6 +80,16 @@ export async function snapshot() {
       clientId: r.client_id == null ? undefined : Number(r.client_id), date: r.date_label,
     })),
     rolesMatrix: rolesMatrix.map((m) => ({ id: Number(m.id), ver: m.ver, note: m.note, meta: m.meta, cells: m.cells, cur: m.cur, draft: m.draft })),
+    finReqs: finReqs.map((r) => ({
+      id: r.id, clientId: Number(r.client_id), kind: r.kind, st: r.st, date: r.date_label,
+      ...(r.amt != null ? { amt: r.amt } : {}), ...(r.months != null ? { months: Number(r.months) } : {}),
+      ...(r.to_date ? { toDate: r.to_date } : {}), ...(r.note ? { note: r.note } : {}), ...(r.file_id ? { fileId: r.file_id } : {}),
+    })),
+    colFiles: colFiles.map((f) => ({
+      id: f.id, clientId: Number(f.client_id), inv: f.inv, ref: f.ref, amt: f.amt, origAmt: f.orig_amt,
+      created: f.created, due: f.due, lateDays: Number(f.late_days), stage: Number(f.stage),
+      promise: f.promise || undefined, dueHist: f.due_hist || [], log: f.log || [], st: f.st,
+    })),
     users: users.map((u) => ({ id: Number(u.id), name: u.name, email: u.email || undefined, role: u.role, branch: u.branch, st: u.st })),
     branches: branches.map((b) => ({ name: b.name, city: b.city, st: b.st, loc: b.loc || undefined })),
     lists: lists.map((l) => ({ id: Number(l.id), name: l.name, items: l.items })),

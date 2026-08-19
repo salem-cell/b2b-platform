@@ -563,3 +563,73 @@ export async function imgSave() {
 export async function imgDelete(pid) {
   await run('products.delImg', { pid: pid || getState().imgPid }, { modal: null, imgUrl: '' });
 }
+
+// ---------- v7: الأجل والمهلة وملفات التحصيل ----------
+
+export function openColFile(id, back) {
+  setState({ page: 'coldet', colSel: id, colBack: back, dhOpen: false, drawer: null, modal: null });
+}
+
+export async function waSend() {
+  const st = getState();
+  await run('finreqs.ajel', { amt: st.waAmt, months: st.waMonths, note: st.waNote },
+    { modal: null, waAmt: '', waNote: '', waMonths: 1 });
+}
+
+export async function wdSend() {
+  const st = getState();
+  await run('finreqs.delay', { fileId: st.colSel, date: st.wdDate, note: st.wdNote },
+    { modal: null, wdDate: '', wdNote: '' });
+}
+
+export async function wpSend() {
+  const st = getState();
+  await run('finreqs.promise', { fileId: st.colSel, date: st.wpDate, amt: st.wpAmt },
+    { modal: null, wpDate: '', wpAmt: '' });
+}
+
+export async function wpaConfirm(id) {
+  const st = getState();
+  await run('col.pay', { id, amt: st.wpaAmt, fromWallet: true }, { modal: null, wpaAmt: '' });
+}
+
+export async function frqApprove(id) {
+  await run('finreqs.approve', { id });
+}
+
+export async function frqReject(id) {
+  await run('finreqs.reject', { id });
+}
+
+export async function cpConfirm(id) {
+  const st = getState();
+  await run('col.pay', { id, amt: st.cpAmt, fromWallet: false }, { modal: null, cpAmt: '' });
+}
+
+export async function ccpSend(id) {
+  const st = getState();
+  await run('col.promise', { id, date: st.ccpDate, amt: st.ccpAmt }, { modal: null, ccpDate: '', ccpAmt: '' });
+}
+
+export async function colRemind(id) {
+  await run('col.remind', { id });
+}
+
+export async function ccrConfirm(id) {
+  const st = getState();
+  await run('col.reschedule', { id, date: st.ccrDate, why: st.ccrWhy }, { modal: null, ccrDate: '', ccrWhy: '' });
+}
+
+export async function colEscalate(id) {
+  await run('col.escalate', { id });
+}
+
+export async function nlSave() {
+  const st = getState();
+  await run('clients.setLimit', { id: st.clientSel, limit: st.nlAmt }, { modal: null, nlAmt: '' });
+}
+
+export async function ctConfirm() {
+  const st = getState();
+  await run('clients.topup', { id: st.clientSel, amt: st.ctAmt }, { modal: null, ctAmt: '' });
+}

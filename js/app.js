@@ -12,7 +12,7 @@ import { renderShell } from './pages/shell.js';
 import { renderDashboard } from './pages/dashboard.js';
 import { renderCatalog } from './pages/catalog.js';
 import { renderOrders, renderApprovals } from './pages/orders.js';
-import { renderFinance, renderFintu } from './pages/finance.js';
+import { renderFinance, renderFintu, renderColDet } from './pages/finance.js';
 import { renderAnalytics, renderFranchisees } from './pages/network.js';
 import { renderTickets, renderRequests, renderClients, renderCatalogAdmin, renderNewClients, renderNcDet, renderRolesMatrix } from './pages/b2b.js';
 import { renderUsers, renderBranches, renderSettings, renderClientProfile } from './pages/org.js';
@@ -28,6 +28,7 @@ const PAGES_RENDER = {
   approvals: renderApprovals,
   wallet: renderFinance,
   fintu: renderFintu,
+  coldet: renderColDet,
   analytics: renderAnalytics,
   frs: renderFranchisees,
   tickets: renderTickets,
@@ -250,6 +251,38 @@ const ACTIONS = {
   bktSend: () => A.bktSend(),
   openRcp: (el) => A.openRcp(el.dataset.arg),
   rcpConfirm: (el) => A.rcpConfirm(el.dataset.arg),
+
+  // v7: الأجل والمهلة وملفات التحصيل
+  openColDet: (el) => A.openColFile(el.dataset.arg, 'fintu'),
+  openColView: (el) => A.openColFile(el.dataset.arg, 'wallet'),
+  openColDetFromClient: (el) => A.openColFile(el.dataset.arg, 'clientdet'),
+  colBackGo: (el) => setState({ page: el.dataset.arg, colSel: null }),
+  toggleDh: () => setState({ dhOpen: !getState().dhOpen }),
+  openWcAjel: () => setState({ modal: { k: 'wcAjel' }, waAmt: '', waNote: '', waMonths: 1 }),
+  setWaMonths: (el) => setState({ waMonths: Number(el.dataset.arg) }),
+  waSend: () => A.waSend(),
+  openWcDelay: (el) => setState({ modal: { k: 'wcDelay' }, colSel: el.dataset.arg, wdDate: '', wdNote: '' }),
+  wdSend: () => A.wdSend(),
+  openWcProm: (el) => setState({ modal: { k: 'wcProm' }, colSel: el.dataset.arg, wpDate: '', wpAmt: '' }),
+  wpSend: () => A.wpSend(),
+  openWcPay: (el) => setState({ modal: { k: 'wcPay', id: el.dataset.arg }, wpaAmt: '' }),
+  wpaConfirm: (el) => A.wpaConfirm(el.dataset.arg),
+  frqApprove: (el) => A.frqApprove(el.dataset.arg),
+  frqReject: (el) => A.frqReject(el.dataset.arg),
+  openColPay: (el) => setState({ modal: { k: 'colPay', id: el.dataset.arg }, cpAmt: '' }),
+  cpConfirm: (el) => A.cpConfirm(el.dataset.arg),
+  openCcProm: (el) => setState({ modal: { k: 'ccProm', id: el.dataset.arg }, ccpDate: '', ccpAmt: '' }),
+  ccpSend: (el) => A.ccpSend(el.dataset.arg),
+  colRemind: (el) => A.colRemind(el.dataset.arg),
+  openCcRes: (el) => setState({ modal: { k: 'ccRes', id: el.dataset.arg }, ccrDate: '', ccrWhy: '' }),
+  ccrConfirm: (el) => A.ccrConfirm(el.dataset.arg),
+  colEscalate: (el) => A.colEscalate(el.dataset.arg),
+  openClLimit: () => setState({ modal: { k: 'clLimit' }, nlAmt: '' }),
+  nlSave: () => A.nlSave(),
+  openClTopup: () => setState({ modal: { k: 'clTopup' }, ctAmt: '' }),
+  ctConfirm: () => A.ctConfirm(),
+  openLegal: (el) => setState({ modal: { k: 'legal', id: el.dataset.arg } }),
+  legalDownload: (el) => A.say(`جارٍ تجهيز ملف القضية ${el.dataset.arg} — PDF موثق يصلك إشعار عند جاهزيته`),
 
   // v5: إنشاء عميل + كتالوج العميل الخاص
   openClientNew: () => A.openClientNew(),

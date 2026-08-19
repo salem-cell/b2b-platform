@@ -657,6 +657,234 @@ async function rolesDiscard(role) {
   return 'أُهملت المسودة — عاد الإصدار المنشور كما هو';
 }
 
+// ============ الأجل والمهلة وملفات التحصيل (v7) ============
+
+const COL_STAGES = ['تواصل ودي', 'مطالبة رسمية', 'إنذار نهائي', 'تجميد الائتمان', 'إحالة قانونية'];
+const FINREQ_ROLES = ['owner', 'fin', 'frz', 'frzs'];
+
+async function getColFile(id) {
+  const [f] = await sql`SELECT * FROM col_files WHERE id = ${id}`;
+  if (!f) throw httpError(404, 'ملف التحصيل غير موجود');
+  return f;
+}
+
+function colLog(f, txt) {
+  return [...(f.log || []), { t: txt, d: `اليوم ${nowLabel()}` }];
+}
+
+async function clientNameOf(cid) {
+  const [c] = await sql`SELECT name FROM clients WHERE id = ${cid}`;
+  return c ? c.name : `عميل ${cid}`;
+}
+
+/** العميل يطلب أجل سداد بمبلغ ومدة */
+async function finreqsAjel(role, { amt, months, note }) {
+  if (!FINREQ_ROLES.includes(role)) throw httpError(403, 'طلب الأجل لمدير حساب المنشأة أو ماليتها');
+  const amount = Math.floor(Number(amt));
+  const m = Math.floor(Number(months));
+  if (!(amount >= 1000 && amount <= 5_000_000)) throw httpError(400, 'أدخل مبلغ أجل صالحًا (1,000 ر.س فأكثر)');
+  if (![1, 2, 3].includes(m)) throw httpError(400, 'اختر مدة الأجل: شهر أو شهران أو ثلاثة');
+  const cid = sessionClientId(role);
+  const seq = await nextSeq('frq');
+  const id = `FRQ-${seq}`;
+  await sql`INSERT INTO fin_reqs (id, client_id, kind, amt, months, note, st)
+            VALUES (${id}, ${cid}, 'ajel', ${amount}, ${m}, ${(note || '').trim()}, 'pend')`;
+  await notify(['b2b'], 'مالية', `طلب أجل ${id} — ${fmt0(amount)} ر.س لمدة ${m === 1 ? 'شهر' : m === 2 ? 'شهرين' : '3 أشهر'} من ${await clientNameOf(cid)}`);
+  return `أُرسل طلب الأجل ${id} لفريق B2B — عند الموافقة يُفتح دين آجل باستحقاق محدد`;
+}
+
+/** العميل يطلب مهلة/تأجيل سداد على ملف تحصيل قائم */
+async function finreqsDelay(role, { fileId, date, note }) {
+  if (!FINREQ_ROLES.includes(role)) throw httpError(403, 'طلب المهلة لمدير حساب المنشأة أو ماليتها');
+  const f = await getColFile(fileId);
+  if (f.st !== 'open') throw httpError(400, 'الملف مغلق — لا مهل عليه');
+  if ((f.due_hist || []).length >= 5) throw httpError(400, 'استُنفدت الجدولة (5/5) — لا يمكن طلب مهلة إضافية');
+  const d = (date || '').trim();
+  if (!d) throw httpError(400, 'اختر التاريخ المقترح من التقويم');
+  const seq = await nextSeq('frq');
+  const id = `FRQ-${seq}`;
+  await sql`INSERT INTO fin_reqs (id, client_id, kind, to_date, note, st, file_id)
+            VALUES (${id}, ${Number(f.client_id)}, 'delay', ${d}, ${(note || '').trim()}, 'pend', ${fileId})`;
+  await sql`UPDATE col_files SET log = ${JSON.stringify(colLog(f, `طلب العميل مهلة سداد حتى ${d} — بانتظار قرار B2B (${id})`))} WHERE id = ${fileId}`;
+  await notify(['b2b'], 'مالية', `طلب مهلة ${id} على ملف التحصيل ${fileId} حتى ${d} — بانتظار قرارك`);
+  return `أُرسل طلب المهلة ${id} — يجمّد B2B التصعيد حتى التاريخ المقترح عند الموافقة`;
+}
+
+/** العميل يسجل وعد سداد بتاريخ — يُقيد فورًا ويُراقب */
+async function finreqsPromise(role, { fileId, date, amt }) {
+  if (!FINREQ_ROLES.includes(role)) throw httpError(403, 'وعد السداد لمدير حساب المنشأة أو ماليتها');
+  const f = await getColFile(fileId);
+  if (f.st !== 'open') throw httpError(400, 'الملف مغلق');
+  const d = (date || '').trim();
+  const amount = Math.floor(Number(amt));
+  if (!d) throw httpError(400, 'اختر تاريخ الوعد من التقويم');
+  if (!(amount > 0)) throw httpError(400, 'أدخل المبلغ الموعود');
+  const seq = await nextSeq('frq');
+  const id = `FRQ-${seq}`;
+  await sql`INSERT INTO fin_reqs (id, client_id, kind, amt, to_date, st, file_id)
+            VALUES (${id}, ${Number(f.client_id)}, 'promise', ${amount}, ${d}, 'ok', ${fileId})`;
+  await sql`UPDATE col_files SET promise = ${JSON.stringify({ date: d, amt: amount })},
+            log = ${JSON.stringify(colLog(f, `سجّل العميل وعد سداد ${fmt0(amount)} ر.س بتاريخ ${d} — يُراقب تلقائيًا`))} WHERE id = ${fileId}`;
+  await notify(['b2b'], 'مالية', `وعد سداد جديد على ${fileId} — ${fmt0(amount)} ر.س بتاريخ ${d}`);
+  return `سُجّل وعد السداد وأُبلغ B2B — الالتزام به يوقف التصعيد`;
+}
+
+/** B2B يقرر طلبات الأجل والمهلة */
+async function finreqsApprove(role, { id }) {
+  if (role !== 'b2b') throw httpError(403, 'قرار الأجل والمهلة صلاحية B2B');
+  const [r] = await sql`SELECT * FROM fin_reqs WHERE id = ${id}`;
+  if (!r) throw httpError(404, 'الطلب غير موجود');
+  if (r.st !== 'pend') throw httpError(400, 'الطلب مقرر مسبقًا');
+  const name = await clientNameOf(Number(r.client_id));
+
+  if (r.kind === 'ajel') {
+    const seq = await nextSeq('col');
+    const fileId = `COL-${seq}`;
+    const m = Number(r.months) || 1;
+    const dueDate = new Date(Date.now() + m * 30 * 86400000);
+    const due = dueDate.toISOString().slice(0, 10);
+    const log = [{ t: `فُتح الدين بموافقة B2B على طلب الأجل ${id} — ${fmt0(Number(r.amt))} ر.س حتى ${due}`, d: `اليوم ${nowLabel()}` }];
+    await sql`INSERT INTO col_files (id, client_id, inv, ref, amt, orig_amt, created, due, stage, log)
+              VALUES (${fileId}, ${Number(r.client_id)}, ${`أجل ${id}`}, ${(r.note || '').trim() || 'مشتريات آجلة معتمدة'},
+                      ${Number(r.amt)}, ${Number(r.amt)}, ${new Date().toISOString().slice(0, 10)}, ${due}, 1, ${JSON.stringify(log)})`;
+    await sql`UPDATE fin_reqs SET st = 'ok', file_id = ${fileId} WHERE id = ${id}`;
+    await notify(['owner', 'fin', 'frz', 'frzs'], 'مالية', `وافق B2B على طلب الأجل ${id} — فُتح الملف ${fileId} باستحقاق ${due}`);
+    return `اعتُمد الأجل — فُتح ملف الدين ${fileId} لعميل «${name}» باستحقاق ${due}`;
+  }
+
+  if (r.kind === 'delay') {
+    const f = await getColFile(r.file_id);
+    if ((f.due_hist || []).length >= 5) throw httpError(400, 'استُنفدت الجدولة (5/5) على هذا الملف');
+    const hist = [...(f.due_hist || []), { old: f.due, to: r.to_date, why: (r.note || '').trim() || 'مهلة معتمدة من B2B', d: `اليوم ${nowLabel()}` }];
+    await sql`UPDATE col_files SET due = ${r.to_date}, late_days = 0, due_hist = ${JSON.stringify(hist)},
+              log = ${JSON.stringify(colLog(f, `وافق B2B على المهلة ${id} — الاستحقاق الجديد ${r.to_date} وجُمّد التصعيد حتى حينه`))} WHERE id = ${f.id}`;
+    await sql`UPDATE fin_reqs SET st = 'ok' WHERE id = ${id}`;
+    await notify(['owner', 'fin', 'frz', 'frzs'], 'مالية', `وافق B2B على المهلة ${id} — استحقاق ${f.id} أصبح ${r.to_date}`);
+    return `اعتُمدت المهلة — استحقاق ${f.id} الجديد ${r.to_date} (جدولة ${hist.length}/5)`;
+  }
+  throw httpError(400, 'وعود السداد تُسجل مباشرة ولا تحتاج قرارًا');
+}
+
+async function finreqsReject(role, { id }) {
+  if (role !== 'b2b') throw httpError(403, 'قرار الأجل والمهلة صلاحية B2B');
+  const [r] = await sql`SELECT * FROM fin_reqs WHERE id = ${id}`;
+  if (!r) throw httpError(404, 'الطلب غير موجود');
+  await sql`UPDATE fin_reqs SET st = 'no' WHERE id = ${id}`;
+  await notify(['owner', 'fin', 'frz', 'frzs'], 'مالية', `اعتذر B2B عن ${r.kind === 'ajel' ? 'طلب الأجل' : 'طلب المهلة'} ${id} — تواصلوا مع مسؤول حسابكم`);
+  return `رُفض الطلب ${id} وأُشعر العميل`;
+}
+
+/** تسجيل دفعة على ملف تحصيل — من B2B (تحصيل يدوي) أو من العميل (من محفظته) */
+async function colPay(role, { id, amt, fromWallet }) {
+  const f = await getColFile(id);
+  if (f.st !== 'open') throw httpError(400, 'الملف مغلق مسبقًا');
+  const amount = Math.round(Number(amt) * 100) / 100;
+  if (!(amount > 0)) throw httpError(400, 'أدخل مبلغ الدفعة');
+  if (amount > Number(f.amt)) throw httpError(400, `الدفعة أكبر من المستحق (${fmt(Number(f.amt))} ر.س)`);
+  const isClient = FINREQ_ROLES.includes(role);
+  if (!isClient && role !== 'b2b') throw httpError(403, 'لا صلاحية');
+
+  // سداد العميل من محفظته: خصم فعلي من رصيد المحفظة
+  if (isClient && fromWallet !== false) {
+    const [w] = await sql`SELECT bal::float FROM wallet WHERE org_cr = ${SAMPLE_CR}`;
+    if (w.bal < amount) throw httpError(400, 'رصيد المحفظة لا يكفي لهذه الدفعة');
+    await sql`UPDATE wallet SET bal = bal - ${amount} WHERE org_cr = ${SAMPLE_CR}`;
+    await sql`INSERT INTO wallet_tx (org_cr, t, d, amt) VALUES (${SAMPLE_CR}, ${`دفعة تحصيل — ملف ${id}`}, 'الآن', ${-amount})`;
+  }
+
+  const rem = Math.round((Number(f.amt) - amount) * 100) / 100;
+  const closed = rem <= 0;
+  const who = isClient ? 'سدد العميل' : 'سجّل B2B';
+  const log = colLog(f, closed
+    ? `${who} دفعة ${fmt(amount)} ر.س — سُدد الملف بالكامل وأُغلق ✓`
+    : `${who} دفعة ${fmt(amount)} ر.س — المتبقي ${fmt(rem)} ر.س`);
+  await sql`UPDATE col_files SET amt = ${Math.max(0, rem)}, st = ${closed ? 'closed' : 'open'},
+            promise = ${closed ? null : f.promise}, log = ${JSON.stringify(log)} WHERE id = ${id}`;
+  if (closed) await notify(['b2b', 'owner', 'fin', 'frz', 'frzs'], 'مالية', `سُدد ملف التحصيل ${id} بالكامل وأُغلق ✓`);
+  return closed ? `سُددت الدفعة وأُغلق الملف ${id} بالكامل ✓` : `سُجلت دفعة ${fmt(amount)} ر.س — المتبقي ${fmt(rem)} ر.س`;
+}
+
+/** B2B يسجل وعد سداد متفقًا عليه مع العميل */
+async function colPromise(role, { id, date, amt }) {
+  if (role !== 'b2b') throw httpError(403, 'صلاحية B2B');
+  const f = await getColFile(id);
+  const d = (date || '').trim();
+  const amount = Math.floor(Number(amt));
+  if (!d || !(amount > 0)) throw httpError(400, 'أدخل تاريخ الوعد ومبلغه');
+  await sql`UPDATE col_files SET promise = ${JSON.stringify({ date: d, amt: amount })},
+            log = ${JSON.stringify(colLog(f, `سجّل B2B وعد سداد متفقًا عليه — ${fmt0(amount)} ر.س بتاريخ ${d}`))} WHERE id = ${id}`;
+  return `سُجّل الوعد — يُراقب تلقائيًا ويُصعّد الملف عند الإخلاف`;
+}
+
+async function colRemind(role, { id }) {
+  if (role !== 'b2b') throw httpError(403, 'صلاحية B2B');
+  const f = await getColFile(id);
+  await sql`UPDATE col_files SET log = ${JSON.stringify(colLog(f, 'أُرسل تذكير سداد للعميل (رسالة نصية + إشعار بالتطبيق)'))} WHERE id = ${id}`;
+  await notify(['owner', 'fin', 'frz', 'frzs'], 'مالية', `تذكير سداد — المستحق على الملف ${id}: ${fmt(Number(f.amt))} ر.س`);
+  return 'أُرسل التذكير ووُثّق في سجل الملف';
+}
+
+/** B2B يجدول الاستحقاق (بحد أقصى 5 جدولات) */
+async function colReschedule(role, { id, date, why }) {
+  if (role !== 'b2b') throw httpError(403, 'صلاحية B2B');
+  const f = await getColFile(id);
+  if (f.st !== 'open') throw httpError(400, 'الملف مغلق');
+  if ((f.due_hist || []).length >= 5) throw httpError(400, 'استُنفدت الجدولة (5/5) — صعّد الملف أو حصّل الدين');
+  const d = (date || '').trim();
+  if (!d) throw httpError(400, 'اختر تاريخ الاستحقاق الجديد');
+  const hist = [...(f.due_hist || []), { old: f.due, to: d, why: (why || '').trim() || 'جدولة من B2B', d: `اليوم ${nowLabel()}` }];
+  await sql`UPDATE col_files SET due = ${d}, late_days = 0, due_hist = ${JSON.stringify(hist)},
+            log = ${JSON.stringify(colLog(f, `جدول B2B الاستحقاق إلى ${d} (جدولة ${hist.length}/5)`))} WHERE id = ${id}`;
+  return `جُدول الاستحقاق إلى ${d} — (${hist.length}/5)`;
+}
+
+/** تصعيد مرحلة الملف — المرحلة الرابعة تجمّد ائتمان العميل تلقائيًا */
+async function colEscalate(role, { id }) {
+  if (role !== 'b2b') throw httpError(403, 'صلاحية B2B');
+  const f = await getColFile(id);
+  if (f.st !== 'open') throw httpError(400, 'الملف مغلق');
+  if (f.stage >= 5) throw httpError(400, 'الملف في المرحلة القانونية بالفعل');
+  const next = f.stage + 1;
+  let extra = '';
+  if (next === 4) {
+    await sql`UPDATE clients SET wst = 'frozen' WHERE id = ${Number(f.client_id)}`;
+    extra = ' — جُمّدت محفظة العميل وائتمانه تلقائيًا';
+  }
+  await sql`UPDATE col_files SET stage = ${next},
+            log = ${JSON.stringify(colLog(f, `صُعّد الملف إلى مرحلة «${COL_STAGES[next - 1]}»${extra}`))} WHERE id = ${id}`;
+  await notify(['owner', 'fin', 'frz', 'frzs'], 'مالية', `صُعّد ملف التحصيل ${id} إلى «${COL_STAGES[next - 1]}»${extra}`);
+  return `صُعّد الملف إلى «${COL_STAGES[next - 1]}»${extra}`;
+}
+
+/** B2B يعدل الحد الائتماني للعميل (لا يقل عن المستخدم) */
+async function clientsSetLimit(role, { id, limit }) {
+  if (role !== 'b2b') throw httpError(403, 'تعديل الحدود صلاحية B2B');
+  const [c] = await sql`SELECT name, used::float FROM clients WHERE id = ${id}`;
+  if (!c) throw httpError(404, 'العميل غير موجود');
+  const l = Math.floor(Number(limit));
+  if (!(l > 0)) throw httpError(400, 'أدخل حدًا صالحًا');
+  if (l < c.used) throw httpError(400, `لا يقبل حدًا أقل من المستخدم (${fmt0(c.used)} ر.س)`);
+  await sql`UPDATE clients SET cr_limit = ${l} WHERE id = ${id}`;
+  if (Number(id) === 1) await sql`UPDATE wallet SET cr_limit = ${l} WHERE org_cr = ${SAMPLE_CR}`;
+  return `حُدّث الحد الائتماني لـ «${c.name}» إلى ${fmt0(l)} ر.س — يسري فورًا`;
+}
+
+/** B2B يشحن محفظة عميل مباشرة (قيد دفعة مستلمة خارج المنصة) */
+async function clientsTopup(role, { id, amt }) {
+  if (role !== 'b2b') throw httpError(403, 'شحن محافظ العملاء صلاحية B2B');
+  const [c] = await sql`SELECT name FROM clients WHERE id = ${id}`;
+  if (!c) throw httpError(404, 'العميل غير موجود');
+  const amount = Math.floor(Number(amt));
+  if (!(amount >= 100 && amount <= 5_000_000)) throw httpError(400, 'أدخل مبلغًا صالحًا (100 ر.س فأكثر)');
+  await sql`UPDATE clients SET bal = bal + ${amount} WHERE id = ${id}`;
+  if (Number(id) === 1) {
+    await sql`UPDATE wallet SET bal = bal + ${amount} WHERE org_cr = ${SAMPLE_CR}`;
+    await sql`INSERT INTO wallet_tx (org_cr, t, d, amt) VALUES (${SAMPLE_CR}, ${'شحن المحفظة — قيد مباشر من B2B'}, 'الآن', ${amount})`;
+  }
+  await notify(['owner', 'fin', 'frz', 'frzs'], 'مالية', `أضاف B2B ${fmt0(amount)} ر.س لمحفظة ${c.name} — قيد مباشر`);
+  return `أُضيفت ${fmt0(amount)} ر.س لمحفظة «${c.name}» فورًا`;
+}
+
 // ============ الكتالوج والمستخدمون والفروع ============
 
 async function productsSetPrice(role, { pid, delta }) {
@@ -808,6 +1036,18 @@ export const COMMANDS = {
   'reqs.reject': reqsReject,
   'reqs.bktSend': reqsBktSend,
   'reqs.rcpConfirm': reqsRcpConfirm,
+  'finreqs.ajel': finreqsAjel,
+  'finreqs.delay': finreqsDelay,
+  'finreqs.promise': finreqsPromise,
+  'finreqs.approve': finreqsApprove,
+  'finreqs.reject': finreqsReject,
+  'col.pay': colPay,
+  'col.promise': colPromise,
+  'col.remind': colRemind,
+  'col.reschedule': colReschedule,
+  'col.escalate': colEscalate,
+  'clients.setLimit': clientsSetLimit,
+  'clients.topup': clientsTopup,
   'frs.create': frsCreate,
   'frs.approve': frsApprove,
   'frs.toggle': frsToggle,

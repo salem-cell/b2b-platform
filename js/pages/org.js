@@ -7,6 +7,7 @@ import { chip, input, ledgerAmount, emptyState, mapSvgSmall, mapPinAt, pinIcon, 
 import { ROLES, STAFF_ROLE_LABEL, STAFF_ROLE_CHIP, INVOICE_STATUS, FRANCHISEE_STATUS } from '../data/constants.js';
 import { PRODUCT_MAP } from '../data/products.js';
 import { typeChip } from './dashboard.js';
+import { frqHistoryTable } from './finance.js';
 
 // ---------- اليوزرات والصلاحيات ----------
 export function renderUsers(st) {
@@ -317,10 +318,40 @@ export function renderClientProfile(st) {
       { id: `INV-9${280 + kk * 7}`, ref: `ORD-2${410 + kk * 9}`, due: 'سُددت 14 يوليو',    amt: kk * 1100 + 3600, st: 'paid' },
     ];
 
+    // v7: ذمم العميل وملفات تحصيله وطلباته المالية
+    const clFiles = (st.colFiles || []).filter((f) => f.clientId === c.id);
+    const clFrq = (st.finReqs || []).filter((r) => r.clientId === c.id);
+    const crPctCl = Math.min(100, Math.round(c.used / Math.max(c.limit, 1) * 100));
     walletView = `
-      <div class="flex-center gap-8" style="display:inline-flex;height:40px;padding:0 16px;border-radius:999px;background:var(--c-purple-soft);color:var(--c-purple);font-size:11.5px;font-weight:800;cursor:pointer;margin-top:16px" data-action="toggleClientWalletView">
-        ${ICONS.chevronR('#654e92')} عودة لملف العميل
+      <div class="flex-center gap-10 wrap" style="margin-top:16px">
+        <div class="flex-center gap-8" style="display:inline-flex;height:40px;padding:0 16px;border-radius:999px;background:var(--c-purple-soft);color:var(--c-purple);font-size:11.5px;font-weight:800;cursor:pointer" data-action="toggleClientWalletView">
+          ${ICONS.chevronR('#654e92')} عودة لملف العميل
+        </div>
+        <div class="grow"></div>
+        <button class="btn btn-primary" style="height:40px;padding:0 18px;border-radius:11px;font-size:11.5px" data-action="openClTopup">+ شحن المحفظة</button>
       </div>
+      <div class="card mt-14" style="padding:12px 16px">
+        <div class="flex-center gap-8">
+          <div class="grow" style="font-size:11.5px;font-weight:800;color:#55506a">الحد الائتماني</div>
+          <div class="num" style="font-size:13.5px;font-weight:700;color:var(--c-purple)">${fmt0(c.limit)} <span style="font-size:9px;font-family:var(--font-ar);color:var(--c-faint)">ر.س</span></div>
+          <button class="btn btn-purple" style="height:32px;padding:0 13px;border-radius:10px;font-size:10.5px" data-action="openClLimit">تعديل الحد</button>
+        </div>
+        <div class="progress" style="margin-top:9px;height:7px"><div style="width:${crPctCl}%"></div></div>
+        <div style="font-size:10px;color:var(--c-muted);margin-top:6px">مستخدم <span class="num" style="font-weight:700">${fmt0(c.used)}</span> · متاح <span class="num" style="font-weight:700;color:var(--c-success)">${fmt0(Math.max(0, c.limit - c.used))}</span> ر.س</div>
+      </div>
+      ${clFiles.length ? `
+        <div class="card mt-14" style="overflow:hidden">
+          <div style="font-size:12.5px;font-weight:800;padding:12px 16px 8px">ملفات التحصيل — اضغط ملفًا لإدارته</div>
+          ${clFiles.map((f) => `
+            <div class="flex-center gap-10 clickable" style="padding:10px 16px;border-top:1px solid var(--c-divider);cursor:pointer" data-action="openColDetFromClient" data-arg="${f.id}">
+              <div style="width:9px;height:9px;border-radius:999px;background:${f.st === 'closed' ? 'var(--c-success)' : 'var(--c-danger)'};flex:none"></div>
+              <div class="num" style="font-size:11px;font-weight:700">${f.id}</div>
+              <div class="grow" style="font-size:10px;color:var(--c-muted);min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(f.ref)} · استحقاق ${esc(f.due)}</div>
+              <div class="num" style="font-size:12px;font-weight:700;color:${f.st === 'closed' ? 'var(--c-success)' : 'var(--c-danger)'}">${f.st === 'closed' ? 'مغلق ✓' : fmt(f.amt) + ' ر.س'}</div>
+              <div style="font-size:10px;font-weight:800;color:var(--c-info)">←</div>
+            </div>`).join('')}
+        </div>` : ''}
+      ${clFrq.length ? `<div class="mt-14">${frqHistoryTable(st, clFrq, 'openColDetFromClient')}</div>` : ''}
       <div class="card mt-16" style="overflow:hidden">
         <div class="flex-center" style="padding:15px 18px 11px">
           <div class="card-title">كشف حركات المحفظة</div><div class="grow"></div>

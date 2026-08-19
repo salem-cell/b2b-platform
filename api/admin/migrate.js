@@ -21,7 +21,7 @@ export default handler(async (req, res) => {
   const schema = readFileSync(join(process.cwd(), 'db', 'schema.sql'), 'utf8');
 
   if (body.reset) {
-    for (const t of ['sessions', 'seqs', 'notifs', 'saved_lists', 'branches', 'org_users', 'roles_matrix', 'new_clients', 'client_products', 'clients', 'frs', 'prod_reqs', 'tickets', 'invoices', 'wallet_tx', 'wallet', 'orders', 'products']) {
+    for (const t of ['sessions', 'seqs', 'notifs', 'saved_lists', 'branches', 'org_users', 'roles_matrix', 'new_clients', 'client_products', 'col_files', 'fin_reqs', 'clients', 'frs', 'prod_reqs', 'tickets', 'invoices', 'wallet_tx', 'wallet', 'orders', 'products']) {
       await sql(`DROP TABLE IF EXISTS ${t} CASCADE`);
     }
   }
@@ -56,6 +56,20 @@ export default handler(async (req, res) => {
     for (const cp of st.clientProds) {
       await sql`INSERT INTO client_products (client_id, pid, price) VALUES (${cp.clientId}, ${cp.pid}, ${cp.price})
                 ON CONFLICT (client_id, pid) DO NOTHING`;
+    }
+  }
+  const [{ count: colCount }] = await sql`SELECT count(*)::int AS count FROM col_files`;
+  if (!colCount) {
+    for (const f of st.colFiles) {
+      await sql`INSERT INTO col_files (id, client_id, inv, ref, amt, orig_amt, created, due, late_days, stage, promise, due_hist, log, st)
+                VALUES (${f.id}, ${f.clientId}, ${f.inv}, ${f.ref}, ${f.amt}, ${f.origAmt}, ${f.created}, ${f.due},
+                        ${f.lateDays}, ${f.stage}, ${f.promise ? JSON.stringify(f.promise) : null},
+                        ${JSON.stringify(f.dueHist)}, ${JSON.stringify(f.log)}, ${f.st})`;
+    }
+    for (const r of st.finReqs) {
+      await sql`INSERT INTO fin_reqs (id, client_id, kind, amt, months, to_date, note, st, file_id, date_label)
+                VALUES (${r.id}, ${r.clientId}, ${r.kind}, ${r.amt ?? null}, ${r.months ?? null}, ${r.toDate ?? null},
+                        ${r.note || ''}, ${r.st}, ${r.fileId ?? null}, ${r.date})`;
     }
   }
 

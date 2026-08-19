@@ -216,12 +216,48 @@ CREATE TABLE IF NOT EXISTS roles_matrix (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 
+-- طلبات الأجل والمهلة ووعود السداد من العملاء (v7)
+CREATE TABLE IF NOT EXISTS fin_reqs (
+  id         text PRIMARY KEY,                -- FRQ-xxx
+  client_id  bigint NOT NULL,
+  kind       text NOT NULL,                   -- ajel (أجل) | delay (مهلة) | promise (وعد سداد)
+  amt        numeric(14,2),
+  months     int,
+  to_date    text,                            -- التاريخ المقترح / الموعود
+  note       text NOT NULL DEFAULT '',
+  st         text NOT NULL DEFAULT 'pend',    -- pend | ok | no (الوعد يسجَّل ok مباشرة)
+  file_id    text,                            -- ملف التحصيل المرتبط / الناتج
+  date_label text NOT NULL DEFAULT 'الآن',
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+-- ملفات التحصيل (v7): دين مفتوح بمراحل تصعيد خمس وسجل موثق
+CREATE TABLE IF NOT EXISTS col_files (
+  id         text PRIMARY KEY,                -- COL-xxx
+  client_id  bigint NOT NULL,
+  inv        text NOT NULL DEFAULT '',        -- الفاتورة المرجعية
+  ref        text NOT NULL DEFAULT '',        -- وصف الدين
+  amt        numeric(14,2) NOT NULL,          -- المستحق المتبقي
+  orig_amt   numeric(14,2) NOT NULL,
+  created    text NOT NULL,                   -- تاريخ إنشاء الدين (تسمية)
+  due        text NOT NULL,                   -- تاريخ الاستحقاق الحالي (تسمية)
+  late_days  int NOT NULL DEFAULT 0,
+  stage      int NOT NULL DEFAULT 1,          -- 1 ودي | 2 رسمي | 3 إنذار | 4 تجميد ائتمان | 5 إحالة قانونية
+  promise    jsonb,                           -- {date, amt} وعد السداد القائم
+  due_hist   jsonb NOT NULL DEFAULT '[]',     -- [{old,to,why,d}] بحد أقصى 5 جدولات
+  log        jsonb NOT NULL DEFAULT '[]',     -- [{t,d}] سجل الإجراءات
+  st         text NOT NULL DEFAULT 'open',    -- open | closed
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS seqs (
-  key text PRIMARY KEY,                       -- order|ticket|cn|req|tu|nc
+  key text PRIMARY KEY,                       -- order|ticket|cn|req|tu|nc|frq|col
   val bigint NOT NULL
 );
 INSERT INTO seqs (key, val) VALUES ('tu', 101) ON CONFLICT (key) DO NOTHING;
 INSERT INTO seqs (key, val) VALUES ('nc', 504) ON CONFLICT (key) DO NOTHING;
+INSERT INTO seqs (key, val) VALUES ('frq', 204) ON CONFLICT (key) DO NOTHING;
+INSERT INTO seqs (key, val) VALUES ('col', 303) ON CONFLICT (key) DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS sessions (
   token      text PRIMARY KEY,

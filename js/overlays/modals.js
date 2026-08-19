@@ -907,6 +907,216 @@ function imgEditModal(st) {
     </div>`;
 }
 
+// ---------- v7: التحصيل والائتمان ----------
+
+/** هيكل موحد لنوافذ v7: عنوان + وصف + حقول + زر تأكيد */
+function finModal({ title, sub, fields, btnLabel, btnAction, btnArg, btnColor = 'var(--c-info)' }) {
+  return `
+    <div style="padding:20px 22px 22px;overflow-y:auto;min-height:0">
+      <div class="flex-center gap-8">
+        <div class="modal-title grow">${title}</div>
+        ${closeBtn()}
+      </div>
+      <div style="font-size:11px;color:var(--c-muted);margin-top:3px;line-height:1.8">${sub}</div>
+      ${fields}
+      <div class="flex gap-9" style="margin-top:15px">
+        <button class="btn grow" style="height:48px;border-radius:13px;background:${btnColor};color:#fff;font-size:13px;font-weight:800" data-action="${btnAction}" ${btnArg ? `data-arg="${esc(btnArg)}"` : ''}>${btnLabel}</button>
+        <button class="btn btn-ghost" style="width:100px;font-size:12.5px" data-action="closeAll">إلغاء</button>
+      </div>
+    </div>`;
+}
+
+const numInput = (key, val, ph) => `
+  <input class="num" value="${esc(val || '')}" data-input="${key}" data-key="${key}" placeholder="${ph}" dir="ltr" inputmode="decimal"
+    style="width:100%;margin-top:12px;height:50px;border:1.5px solid var(--c-divider);border-radius:13px;padding:0 14px;font-size:16px;font-weight:700;outline:none;background:var(--c-subtle);text-align:center">`;
+const dateInput = (key, val, label) => `
+  <div style="font-size:11px;font-weight:800;color:var(--c-muted);margin:13px 2px 6px">${label} — اختر من التقويم</div>
+  <input class="num" type="date" value="${esc(val || '')}" data-input="${key}" data-key="${key}" dir="ltr"
+    style="width:100%;height:48px;border:1.5px solid var(--c-divider);border-radius:13px;padding:0 14px;font-size:14px;font-weight:700;outline:none;background:var(--c-subtle)">`;
+const noteInput = (key, val, ph) => `
+  <input value="${esc(val || '')}" data-input="${key}" data-key="${key}" placeholder="${ph}"
+    style="width:100%;margin-top:9px;height:46px;border:1.5px solid var(--c-divider);border-radius:13px;padding:0 14px;font-size:12.5px;outline:none;background:var(--c-subtle)">`;
+
+/** طلب أجل (العميل) */
+function wcAjelModal(st) {
+  const months = [[1, 'شهر'], [2, 'شهران'], [3, '3 أشهر']];
+  return finModal({
+    title: 'طلب أجل',
+    sub: 'أجل سداد بمدة محددة يراجعه B2B — عند الموافقة تصبح مشترياتك آجلة حتى تاريخ الاستحقاق، والتعثر بعده يفتح ملف تحصيل تلقائيًا.',
+    fields: `
+      ${numInput('waAmt', st.waAmt, 'مبلغ الأجل المطلوب بالريال')}
+      <div style="font-size:11px;font-weight:800;color:var(--c-muted);margin:12px 2px 7px">مدة الأجل</div>
+      <div class="flex gap-7">
+        ${months.map(([m, l]) => `
+          <div class="grow" style="height:40px;display:flex;align-items:center;justify-content:center;border-radius:11px;font-size:11.5px;font-weight:800;cursor:pointer;${(st.waMonths || 1) === m ? 'background:var(--c-purple);color:#fff' : 'background:#fff;color:var(--c-muted);border:1px solid var(--c-card-border)'}" data-action="setWaMonths" data-arg="${m}">${l}</div>`).join('')}
+      </div>
+      ${noteInput('waNote', st.waNote, 'مبرر الطلب — مثال: توسعة، موسم، افتتاح فرع…')}`,
+    btnLabel: 'إرسال الطلب لB2B', btnAction: 'waSend', btnColor: 'var(--c-purple)',
+  });
+}
+
+/** طلب مهلة / تأجيل (العميل) */
+function wcDelayModal(st) {
+  return finModal({
+    title: 'طلب مهلة / تأجيل سداد',
+    sub: 'يصل الطلب لB2B ويقرره — الموافقة تجمّد التصعيد حتى التاريخ المقترح وتُسجل في ملفك.',
+    fields: `${dateInput('wdDate', st.wdDate, 'التاريخ المقترح')}${noteInput('wdNote', st.wdNote, 'سبب المهلة — اختياري')}`,
+    btnLabel: 'إرسال طلب المهلة', btnAction: 'wdSend', btnColor: '#b26a16',
+  });
+}
+
+/** وعد سداد (العميل) */
+function wcPromModal(st) {
+  return finModal({
+    title: 'تحديد وعد سداد',
+    sub: 'يُسجل فورًا في ملف التحصيل ويُبلغ B2B — الالتزام به يوقف التصعيد، والإخلاف يصعّده تلقائيًا.',
+    fields: `${dateInput('wpDate', st.wpDate, 'تاريخ السداد')}${numInput('wpAmt', st.wpAmt, 'المبلغ الموعود بالريال')}`,
+    btnLabel: 'تسجيل الوعد وإبلاغ B2B', btnAction: 'wpSend',
+  });
+}
+
+/** سداد دفعة من المحفظة (العميل) */
+function wcPayModal(st) {
+  const f = (st.colFiles || []).find((x) => x.id === st.modal.id) || { amt: 0 };
+  return finModal({
+    title: 'سداد دفعة من المحفظة',
+    sub: `المستحق <span class="num" style="font-weight:700;color:var(--c-danger)">${fmt(f.amt)}</span> ر.س · رصيد محفظتك <span class="num" style="font-weight:700;color:var(--c-purple)">${fmt(st.wallet.bal)}</span> ر.س — أي مبلغ تسدده يُسجل دفعة في ملفك، وسداد الكامل يغلقه.`,
+    fields: numInput('wpaAmt', st.wpaAmt, 'مبلغ الدفعة بالريال'),
+    btnLabel: 'سداد الدفعة', btnAction: 'wpaConfirm', btnArg: st.modal.id, btnColor: 'var(--c-success)',
+  });
+}
+
+/** وعد سداد (B2B) */
+function ccPromModal(st) {
+  return finModal({
+    title: 'تسجيل وعد سداد',
+    sub: 'وعد متفق عليه مع العميل — يُراقب تلقائيًا ويُصعّد الملف عند الإخلاف به.',
+    fields: `${dateInput('ccpDate', st.ccpDate, 'تاريخ الوعد')}${numInput('ccpAmt', st.ccpAmt, 'المبلغ الموعود بالريال')}`,
+    btnLabel: 'تسجيل الوعد', btnAction: 'ccpSend', btnArg: st.modal.id,
+  });
+}
+
+/** تسجيل دفعة تحصيل (B2B) */
+function colPayModal(st) {
+  const f = (st.colFiles || []).find((x) => x.id === st.modal.id) || { amt: 0 };
+  return finModal({
+    title: `تسجيل دفعة — <span class="num">${esc(st.modal.id || '')}</span>`,
+    sub: `المستحق المتبقي <span class="num" style="font-weight:700;color:var(--c-danger)">${fmt(f.amt)}</span> ر.س — سجّل ما حُصّل نقدًا أو بتحويل خارج المنصة؛ سداد الكامل يغلق الملف.`,
+    fields: numInput('cpAmt', st.cpAmt, 'مبلغ الدفعة بالريال'),
+    btnLabel: 'تسجيل الدفعة', btnAction: 'cpConfirm', btnArg: st.modal.id, btnColor: 'var(--c-success)',
+  });
+}
+
+/** جدولة الاستحقاق (B2B) */
+function ccResModal(st) {
+  const f = (st.colFiles || []).find((x) => x.id === st.modal.id) || { dueHist: [] };
+  return finModal({
+    title: 'جدولة تاريخ الاستحقاق',
+    sub: `الجدولة رقم <span class="num">${(f.dueHist || []).length + 1}</span> من 5 كحد أقصى — تُصفّر عداد التأخر وتُوثق في سجل الملف وسجل تعديل الاستحقاق.`,
+    fields: `${dateInput('ccrDate', st.ccrDate, 'الاستحقاق الجديد')}${noteInput('ccrWhy', st.ccrWhy, 'سبب الجدولة')}`,
+    btnLabel: 'اعتماد الجدولة', btnAction: 'ccrConfirm', btnArg: st.modal.id, btnColor: '#b26a16',
+  });
+}
+
+/** تعديل الحد الائتماني (B2B) */
+function clLimitModal(st) {
+  const c = st.clients.find((x) => x.id === st.clientSel) || { name: '', limit: 0, used: 0 };
+  return finModal({
+    title: `تعديل الحد الائتماني — ${esc(c.name)}`,
+    sub: `الحد الحالي <span class="num" style="font-weight:700;color:var(--c-purple)">${fmt0(c.limit)}</span> ر.س · المستخدم <span class="num" style="font-weight:700">${fmt0(c.used)}</span> ر.س — لا يقبل حدًا أقل من المستخدم.`,
+    fields: numInput('nlAmt', st.nlAmt, 'الحد الجديد بالريال'),
+    btnLabel: 'حفظ الحد الجديد', btnAction: 'nlSave', btnColor: 'var(--c-purple)',
+  });
+}
+
+/** شحن محفظة عميل (B2B — قيد مباشر) */
+function clTopupModal(st) {
+  const c = st.clients.find((x) => x.id === st.clientSel) || { name: '', bal: 0 };
+  return finModal({
+    title: `شحن محفظة — ${esc(c.name)}`,
+    sub: `الرصيد الحالي <span class="num" style="font-weight:700;color:var(--c-purple)">${fmt0(c.bal)}</span> ر.س — قيد مباشر لدفعة استلمها B2B خارج المنصة (نقد/شيك/حوالة موثقة).`,
+    fields: numInput('ctAmt', st.ctAmt, 'المبلغ بالريال'),
+    btnLabel: 'إضافة المبلغ للمحفظة', btnAction: 'ctConfirm',
+  });
+}
+
+/** ملف القضية القانوني (B2B) */
+function legalModal(st) {
+  const f = (st.colFiles || []).find((x) => x.id === st.modal.id);
+  if (!f) return '<div style="padding:22px">الملف غير موجود.</div>';
+  const c = st.clients.find((x) => x.id === f.clientId) || { name: '', cr: '', city: '' };
+  const kv = (rows) => `
+    <div style="border:1px solid var(--c-divider);border-radius:13px;overflow:hidden">
+      ${rows.map(([a, b]) => `
+        <div class="flex" style="border-top:1px solid var(--c-divider);font-size:11px">
+          <div style="width:150px;background:var(--c-subtle);padding:8px 13px;font-weight:800;color:#55506a;flex:none">${a}</div>
+          <div class="grow" style="padding:8px 13px;font-weight:700">${b}</div>
+        </div>`).join('')}
+    </div>`;
+  return `
+    <div style="padding:20px 22px 22px;max-height:78vh;overflow-y:auto;min-height:0">
+      <div class="flex-center gap-10">
+        <div style="width:38px;height:38px;border-radius:11px;background:#262433;color:#fff;display:flex;align-items:center;justify-content:center;font-size:17px;flex:none">⚖</div>
+        <div class="grow">
+          <div class="modal-title">ملف القضية القانوني — <span class="num">${f.id}</span></div>
+          <div style="font-size:10.5px;color:var(--c-muted);margin-top:1px">سري — يُسلَّم للمستشار القانوني بعد استنفاد مراحل التحصيل الودية</div>
+        </div>
+        ${closeBtn()}
+      </div>
+      <div style="font-size:11px;font-weight:800;color:var(--c-purple);margin:15px 2px 7px">أولًا — بيانات المدين</div>
+      ${kv([
+        ['اسم المنشأة', esc(c.name)],
+        ['السجل التجاري', `<span class="num">${esc(c.cr)}</span>`],
+        ['المدينة', esc(c.city)],
+        ['نوع العميل', esc(c.type || 'مستقل')],
+        ['حالة الحساب', c.st === 'susp' ? 'موقوف' : 'نشط — يُوقف عند الإحالة'],
+      ])}
+      <div style="font-size:11px;font-weight:800;color:var(--c-purple);margin:13px 2px 7px">ثانيًا — بيانات المديونية</div>
+      ${kv([
+        ['مرجع الدين', `<span class="num">${esc(f.inv)}</span> · ${esc(f.ref)}`],
+        ['أصل المبلغ', `<span class="num">${fmt(f.origAmt)}</span> ر.س`],
+        ['المستحق المتبقي', `<span class="num" style="color:var(--c-danger)">${fmt(f.amt)}</span> ر.س`],
+        ['تاريخ إنشاء الدين', `<span class="num">${esc(f.created)}</span>`],
+        ['الاستحقاق الحالي والتأخر', `<span class="num">${esc(f.due)}</span> — متأخر <span class="num">${f.lateDays}</span> يومًا`],
+      ])}
+      <div style="font-size:11px;font-weight:800;color:var(--c-purple);margin:13px 2px 7px">ثالثًا — سجل تعديل تاريخ الاستحقاق</div>
+      ${(f.dueHist || []).length ? `
+        <div style="border:1px solid #F0DEB8;border-radius:13px;overflow:hidden">
+          <div style="display:grid;grid-template-columns:34px 1fr 1fr 1.1fr 150px;gap:8px;padding:8px 13px;background:#b26a16;font-size:9px;font-weight:800;color:#fff">
+            <div>#</div><div>الاستحقاق السابق</div><div>الاستحقاق الجديد</div><div>السبب</div><div>تاريخ التعديل</div>
+          </div>
+          ${f.dueHist.map((h, i) => `
+            <div style="display:grid;grid-template-columns:34px 1fr 1fr 1.1fr 150px;gap:8px;align-items:center;padding:8px 13px;border-top:1px solid #F7EBD2;background:#fff">
+              <div class="num" style="width:20px;height:20px;border-radius:999px;background:var(--c-warn-bg);color:#8a5f10;font-size:9px;font-weight:800;display:flex;align-items:center;justify-content:center">${i + 1}</div>
+              <div class="num" style="font-size:9.5px;font-weight:700;color:var(--c-faint);text-decoration:line-through">${esc(h.old)}</div>
+              <div class="num" style="font-size:9.5px;font-weight:800;color:var(--c-danger)">${esc(h.to)}</div>
+              <div style="font-size:9px;font-weight:700;color:#55506a">${esc(h.why)}</div>
+              <div class="num" style="font-size:9px;font-weight:700;color:var(--c-muted)">${esc(h.d)}</div>
+            </div>`).join('')}
+        </div>`
+        : '<div style="border:1px dashed #DDD9E6;border-radius:13px;padding:11px 14px;font-size:10.5px;color:var(--c-muted);background:var(--c-subtle)">لا توجد تعديلات — الدين قائم على تاريخ الاستحقاق الأصلي دون أي مهل أو جدولات.</div>'}
+      <div style="font-size:11px;font-weight:800;color:var(--c-purple);margin:13px 2px 7px">رابعًا — السجل الزمني الموثق للإجراءات</div>
+      <div style="border:1px solid var(--c-divider);border-radius:13px;overflow:hidden">
+        <div style="display:grid;grid-template-columns:40px 1fr 170px;gap:8px;padding:8px 13px;background:#262433;font-size:9.5px;font-weight:800;color:#fff">
+          <div>#</div><div>الإجراء</div><div>التاريخ والوقت</div>
+        </div>
+        <div style="max-height:200px;overflow-y:auto">
+          ${(f.log || []).map((g, i) => `
+            <div style="display:grid;grid-template-columns:40px 1fr 170px;gap:8px;align-items:center;padding:9px 13px;border-top:1px solid var(--c-divider)">
+              <div class="num" style="width:22px;height:22px;border-radius:999px;background:#EBE8F2;color:#262433;font-size:9.5px;font-weight:800;display:flex;align-items:center;justify-content:center">${i + 1}</div>
+              <div style="font-size:10.5px;font-weight:700;color:#55506a;line-height:1.7">${esc(g.t)}</div>
+              <div class="num" style="font-size:9.5px;font-weight:700;color:var(--c-muted)">${esc(g.d)}</div>
+            </div>`).join('')}
+        </div>
+      </div>
+      <div style="background:var(--c-warn-bg);border:1px solid #F0DEB8;border-radius:12px;padding:10px 14px;font-size:10.5px;line-height:1.9;color:#8a5f10;margin-top:12px">استنفدت المنصة الإجراءات الودية الموثقة أعلاه دون سداد — الملف جاهز للمطالبة وفق نظام المعاملات التجارية.</div>
+      <div class="flex gap-9" style="margin-top:15px">
+        <button class="btn grow" style="height:48px;border-radius:13px;background:#262433;color:#fff;font-size:13px;font-weight:800" data-action="legalDownload" data-arg="${f.id}">⬇ تحميل ملف القضية — لتسليم المحامي</button>
+        <button class="btn btn-ghost" style="width:100px;font-size:12.5px" data-action="closeAll">إغلاق</button>
+      </div>
+    </div>`;
+}
+
 const MODALS = {
   cart: cartModal,
   cnNew: clientNewModal,
@@ -915,6 +1125,16 @@ const MODALS = {
   bkt: bktModal,
   rcp: rcpModal,
   imgEdit: imgEditModal,
+  wcAjel: wcAjelModal,
+  wcDelay: wcDelayModal,
+  wcProm: wcPromModal,
+  wcPay: wcPayModal,
+  ccProm: ccPromModal,
+  colPay: colPayModal,
+  ccRes: ccResModal,
+  clLimit: clLimitModal,
+  clTopup: clTopupModal,
+  legal: legalModal,
   brDet: branchDetailModal,
   mapView: mapViewModal,
   mapPick: mapPickModal,
