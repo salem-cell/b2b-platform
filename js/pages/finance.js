@@ -224,16 +224,9 @@ function renderWalletSeg(st) {
       </div>
       <div style="font-size:10.5px;font-weight:800;color:var(--c-info);flex:none">فتح ملف التحصيل ←</div>
     </div>` : '';
-  const ajelStrip = canFrq ? `
-    <div class="flex-center gap-9 wrap" style="margin-bottom:14px">
-      <button class="btn" style="height:40px;padding:0 18px;border-radius:11px;background:var(--c-purple);color:#fff;font-size:11.5px;font-weight:800" data-action="openWcAjel">+ طلب أجل</button>
-      <div style="font-size:10px;color:var(--c-muted);line-height:1.7">أجل سداد بمدة محددة يراجعه B2B — عند الموافقة تصبح مشترياتك آجلة حتى تاريخ الاستحقاق.</div>
-    </div>` : '';
-
   return `
     ${pendingTopupBanner(st)}
     ${colBanner}
-    ${ajelStrip}
     ${frqHistoryTable(st, myFrq, 'openColView')}
     <div style="display:grid;grid-template-columns:1fr 1.3fr;gap:14px;align-items:start">
       <div style="display:flex;flex-direction:column;gap:14px">
@@ -243,7 +236,9 @@ function renderWalletSeg(st) {
           <div style="font-size:10.5px;opacity:.8;margin-top:2px">المحفظة تتبع السجل التجاري وتعمل على فروع منشأتك فقط.</div>
           <div class="flex gap-8 mt-16">
             <button class="btn grow" style="height:44px;border-radius:12px;background:#fff;color:var(--c-purple);font-size:12.5px" data-action="openTopup">شحن المحفظة</button>
-            <button class="btn grow" style="height:44px;border-radius:12px;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.45);color:#fff;font-size:12.5px" data-action="goInvoices">الفواتير</button>
+            ${canFrq
+              ? '<button class="btn grow" style="height:44px;border-radius:12px;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.45);color:#fff;font-size:12.5px" data-action="openWcAjel">طلب أجل</button>'
+              : '<button class="btn grow" style="height:44px;border-radius:12px;background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.45);color:#fff;font-size:12.5px" data-action="goInvoices">الفواتير</button>'}
           </div>
         </div>
         <div class="card" style="padding:18px">
