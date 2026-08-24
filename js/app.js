@@ -19,6 +19,7 @@ import { renderUsers, renderBranches, renderSettings, renderClientProfile } from
 import { renderDrawer } from './overlays/drawer.js';
 import { renderModal } from './overlays/modals.js';
 import { renderMobileApp } from './mobile/index.js';
+import { openLegalDocument } from './legal.js';
 
 // ---------- خريطة الصفحات ----------
 const PAGES_RENDER = {
@@ -282,7 +283,10 @@ const ACTIONS = {
   openClTopup: () => setState({ modal: { k: 'clTopup' }, ctAmt: '' }),
   ctConfirm: () => A.ctConfirm(),
   openLegal: (el) => setState({ modal: { k: 'legal', id: el.dataset.arg } }),
-  legalDownload: (el) => A.say(`جارٍ تجهيز ملف القضية ${el.dataset.arg} — PDF موثق يصلك إشعار عند جاهزيته`),
+  legalDownload: (el) => {
+    if (openLegalDocument(getState(), el.dataset.arg)) A.say('فُتح ملف القضية — اطبعه أو احفظه PDF لتسليم المحامي');
+    else A.say('اسمح بالنوافذ المنبثقة لهذا الموقع ثم أعد المحاولة');
+  },
 
   // v5: إنشاء عميل + كتالوج العميل الخاص
   openClientNew: () => A.openClientNew(),
