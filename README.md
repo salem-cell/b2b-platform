@@ -39,6 +39,17 @@ db/schema.sql        المخطط الكامل (15 جدولًا)
 `{ msg, snapshot }` — اللقطة تُطبَّق على المخزن فيتحدث كل شيء. قائمة الأوامر كاملة في
 `api/_lib/logic.js → COMMANDS`.
 
+### بوابة بوت واتس اب (`api/bot.js`)
+
+endpoint خادم↔خادم للبوت الموجود في مجلد `ملف كلاود وواتس اب`، محمي بترويسة `x-bot-key` تساوي متغير البيئة **`BOT_API_KEY`** في Vercel (لا يعتمد على الجلسات):
+
+| الطلب | الوظيفة |
+|---|---|
+| `GET /api/bot?action=products&q=حليب[&client_id=1]` | بحث بالاسم مع سعر العميل الخاص إن وُجد |
+| `GET /api/bot?action=product&id=P-1042` | منتج واحد |
+| `GET /api/bot?action=order_status&id=ORD-1077&phone=9665...` | حالة طلب (فقط إن كان الطلب لنفس الجوال) |
+| `POST /api/bot` `{action:'order', items:[{pid,qty}], phone, name?, note?, quote?}` | ينشئ `ORD-xxxx` بحالة `b2b` (تجهيز) بفرع "واتس اب" + إشعار |
+
 ### تشغيل الترحيل (مرة واحدة أو لإعادة الضبط)
 
 ```bash
