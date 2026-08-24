@@ -284,8 +284,8 @@ const ACTIONS = {
   ctConfirm: () => A.ctConfirm(),
   openLegal: (el) => setState({ modal: { k: 'legal', id: el.dataset.arg } }),
   legalDownload: (el) => {
-    if (openLegalDocument(getState(), el.dataset.arg)) A.say('فُتح ملف القضية — اطبعه أو احفظه PDF لتسليم المحامي');
-    else A.say('اسمح بالنوافذ المنبثقة لهذا الموقع ثم أعد المحاولة');
+    if (openLegalDocument(getState(), el.dataset.arg)) A.say('جُهّز ملف القضية — من حوار الطباعة اختر «حفظ PDF» لتسليم المحامي');
+    else A.say('ملف التحصيل غير موجود');
   },
 
   // v5: إنشاء عميل + كتالوج العميل الخاص

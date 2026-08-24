@@ -59,19 +59,10 @@ export function openLegalDocument(st, fileId) {
   .sig { display: flex; gap: 24px; margin-top: 34px; page-break-inside: avoid; }
   .sig div { flex: 1; border-top: 1.5px solid #262433; padding-top: 7px; font-size: 10.5px; font-weight: 800; color: #55506a; text-align: center; }
   footer { margin-top: 26px; padding-top: 9px; border-top: 1px solid #DDD9E6; font-size: 9px; color: #a8a4b8; display: flex; justify-content: space-between; }
-  .toolbar { position: fixed; top: 14px; left: 14px; display: flex; gap: 8px; }
-  .toolbar button { font-family: inherit; font-weight: 800; font-size: 12px; border: none; border-radius: 10px; padding: 10px 20px; cursor: pointer; }
-  .toolbar .p { background: #262433; color: #fff; }
-  .toolbar .c { background: #F4F3F8; color: #55506a; }
-  @media print { .toolbar { display: none; } body { padding: 0; } }
+  @media print { body { padding: 0; } }
 </style>
 </head>
 <body>
-  <div class="toolbar">
-    <button class="p" onclick="window.print()">🖨 طباعة / حفظ PDF</button>
-    <button class="c" onclick="window.close()">إغلاق</button>
-  </div>
-
   <header>
     <img src="${location.origin}/assets/logo-1.png" alt="B2B" onerror="this.style.display='none'">
     <div>
@@ -152,9 +143,21 @@ export function openLegalDocument(st, fileId) {
 </body>
 </html>`;
 
-  const w = window.open('', '_blank');
-  if (!w) return false;   // مانع النوافذ المنبثقة
-  w.document.write(html);
-  w.document.close();
+  // طباعة عبر إطار مخفي — لا نوافذ منبثقة فلا يحظرها المتصفح
+  const prev = document.getElementById('legal-print-frame');
+  if (prev) prev.remove();
+  const frame = document.createElement('iframe');
+  frame.id = 'legal-print-frame';
+  frame.style.cssText = 'position:fixed;width:0;height:0;border:0;visibility:hidden';
+  document.body.appendChild(frame);
+  frame.srcdoc = html;
+  frame.onload = () => {
+    const w = frame.contentWindow;
+    // مهلة قصيرة لاكتمال تحميل الخط قبل فتح حوار الطباعة
+    setTimeout(() => { try { w.focus(); w.print(); } catch { /* بيئات بلا طباعة */ } }, 350);
+    // يبقى الإطار ما دام حوار الطباعة مفتوحًا ثم يُزال
+    if (w) w.addEventListener('afterprint', () => setTimeout(() => frame.remove(), 500));
+    setTimeout(() => { if (document.getElementById('legal-print-frame') === frame) frame.remove(); }, 120000);
+  };
   return true;
 }
