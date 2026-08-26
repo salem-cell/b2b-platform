@@ -69,7 +69,7 @@ export function createInitialState() {
     // حقول النماذج المؤقتة
     approveQty: null, recv: null,
     rejectText: '', holdText: '', tHoldText: '',
-    topupAmt: 2500, topupMethod: 'مدى', tuProof: false, topupReqs: [], reqPrice: 64,
+    topupAmt: 2500, topupMethod: 'مدى', tuProof: false, tuCopied: null, topupReqs: [], reqPrice: 64,
     frSel: null, frName: '', frCr: '', frKind: 'normal', frRegion: '',
     lists: SAVED_LISTS, lnName: '', lnQty: {}, lnSearch: '',
     reqName: '', reqUnit: '', reqNote: '', reqSearch: '', reqCat: 'الكل',

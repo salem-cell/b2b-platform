@@ -140,6 +140,15 @@ const ACTIONS = {
   rejectTopup: (el) => A.rejectTopup(el.dataset.arg),
   viewProof: (el) => A.say(`فُتحت صورة الحوالة ${el.dataset.arg} — معاينة`),
   toggleTuProof: () => setState({ tuProof: !getState().tuProof }),
+  tuCopy: (el) => {
+    const [which, value] = el.dataset.arg.split('|');
+    const done = () => {
+      setState({ tuCopied: which });
+      setTimeout(() => { if (getState().tuCopied === which) setState({ tuCopied: null }); }, 2200);
+    };
+    if (navigator.clipboard?.writeText) navigator.clipboard.writeText(value).then(done, done);
+    else done();
+  },
   reqPriceInc: () => setState({ reqPrice: Math.min(100000, getState().reqPrice + 1) }),
   reqPriceDec: () => setState({ reqPrice: Math.max(1, getState().reqPrice - 1) }),
   confirmReqPrice: () => A.confirmReqPrice(),

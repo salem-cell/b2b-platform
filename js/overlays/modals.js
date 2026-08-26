@@ -243,7 +243,30 @@ function topupModal(st) {
           </div>`).join('')}
       </div>
       ${st.topupMethod === 'تحويل بنكي' ? `
-        <div class="field-label" style="margin-top:16px">صورة الحوالة <span style="color:var(--c-warn)">(إلزامية)</span></div>
+        <div class="field-label" style="margin-top:16px">حوّل إلى حسابنا البنكي</div>
+        <div style="border:1px solid var(--c-purple-border);border-radius:14px;overflow:hidden">
+          <div class="flex-center gap-10" style="padding:11px 15px;background:var(--c-purple-soft)">
+            <div style="height:44px;padding:0 12px;border-radius:11px;background:#fff;border:1px solid #E4DCF3;display:flex;align-items:center;justify-content:center;flex:none">
+              <img src="assets/alrajhi-logo.svg" alt="مصرف الراجحي" style="height:32px;width:auto;display:block" onerror="this.style.display='none'">
+            </div>
+            <div class="grow">
+              <div style="font-size:12.5px;font-weight:800;color:#3f3358">شركة سعر للتجارة</div>
+              <div style="font-size:10px;color:#7a6f95;margin-top:1px">مصرف الراجحي</div>
+            </div>
+          </div>
+          <div class="flex-center gap-8" style="padding:9px 15px;border-top:1px solid var(--c-divider);background:#fff">
+            <div style="width:92px;font-size:9.5px;font-weight:800;color:var(--c-faint);flex:none">رقم الآيبان</div>
+            <div class="num grow" style="font-size:12px;font-weight:700;letter-spacing:.4px" dir="ltr">SA82 8000 0211 6080 1052 0752</div>
+            <button class="btn" style="height:28px;padding:0 11px;border-radius:9px;background:var(--c-purple-soft);color:var(--c-purple);font-size:9.5px;font-weight:800;flex:none" data-action="tuCopy" data-arg="iban|SA8280000211608010520752">${st.tuCopied === 'iban' ? '✓ نُسخ' : 'نسخ'}</button>
+          </div>
+          <div class="flex-center gap-8" style="padding:9px 15px;border-top:1px solid var(--c-divider);background:#fff">
+            <div style="width:92px;font-size:9.5px;font-weight:800;color:var(--c-faint);flex:none">رقم الحساب</div>
+            <div class="num grow" style="font-size:12px;font-weight:700;letter-spacing:.4px" dir="ltr">2110 0001 0006 0805 20752</div>
+            <button class="btn" style="height:28px;padding:0 11px;border-radius:9px;background:var(--c-purple-soft);color:var(--c-purple);font-size:9.5px;font-weight:800;flex:none" data-action="tuCopy" data-arg="acc|211000010006080520752">${st.tuCopied === 'acc' ? '✓ نُسخ' : 'نسخ'}</button>
+          </div>
+          <div style="padding:8px 15px;border-top:1px solid var(--c-divider);background:var(--c-subtle);font-size:9px;color:var(--c-muted);line-height:1.8">حوّل المبلغ ثم أرفق إيصال التحويل أدناه — يُضاف الرصيد فور تعميد B2B للحوالة.</div>
+        </div>
+        <div class="field-label" style="margin-top:16px">إيصال التحويل <span style="color:var(--c-warn)">(إلزامي)</span></div>
         <div class="flex-center gap-11" style="border:1.5px dashed ${st.tuProof ? 'var(--c-success-border)' : '#D8D4E2'};border-radius:13px;background:var(--c-subtle);padding:14px 16px;cursor:pointer" data-action="toggleTuProof">
           <div style="width:40px;height:40px;border-radius:11px;background:${st.tuProof ? 'var(--c-success-bg)' : 'var(--c-chip-bg)'};display:flex;align-items:center;justify-content:center;flex:none">
             ${st.tuProof
@@ -251,7 +274,7 @@ function topupModal(st) {
               : '<svg width="17" height="17" viewBox="0 0 24 24" fill="none"><rect x="4" y="5" width="16" height="14" rx="2.4" stroke="#7d7990" stroke-width="1.7"></rect><circle cx="9" cy="10" r="1.7" stroke="#7d7990" stroke-width="1.6"></circle><path d="M5 17l4.5-4 3.5 3 2.8-2.4L20 17.5" stroke="#7d7990" stroke-width="1.7" stroke-linejoin="round"></path></svg>'}
           </div>
           <div class="grow">
-            <div style="font-size:12px;font-weight:800;color:${st.tuProof ? 'var(--c-success)' : 'var(--c-muted)'}">${st.tuProof ? 'أُرفقت صورة الحوالة' : 'أرفق صورة الحوالة البنكية'}</div>
+            <div style="font-size:12px;font-weight:800;color:${st.tuProof ? 'var(--c-success)' : 'var(--c-muted)'}">${st.tuProof ? 'أُرفق إيصال التحويل' : 'أرفق إيصال التحويل البنكي'}</div>
             <div style="font-size:9.5px;color:var(--c-faint);margin-top:1px">JPG / PNG / PDF — تظهر لفريق B2B في التعميدات المالية</div>
           </div>
           <div style="font-size:10.5px;font-weight:800;color:var(--c-info)">${st.tuProof ? 'تغيير' : 'إرفاق'}</div>
