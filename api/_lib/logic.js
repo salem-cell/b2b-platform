@@ -5,6 +5,18 @@
 import { sql, nextSeq, nowLabel, notify, fmt, fmt0, VAT, SAMPLE_CR } from './db.js';
 import { httpError } from './http.js';
 import { ROLES, SUPER_FR_ID } from '../../js/data/constants.js';
+import { emit, emitOrderConfirmed, sentToOps, enabled as integrationOn } from './integration.js';
+
+/** طلب أُرسل لنظام العمليات: التنفيذ (تعديل الكميات/التعليق/الإرسال للتوصيل) يُدار هناك */
+function opsOwned(o) {
+  if (sentToOps(o)) throw httpError(409, `الطلب ${o.id} يُنفَّذ في نظام العمليات (${o.ops_ref || 'قيد الاستلام'}) — التجهيز والتوصيل يُداران من هناك`);
+}
+
+/** سعر لحظة الطلب لكل صنف: سعر المنشأة الخاص إن وُجد وإلا سعر القائمة — يُحفظ في سطر الطلب */
+async function pricesFor(clientId) {
+  const own = await sql`SELECT pid, price::float AS price FROM client_products WHERE client_id = ${clientId}`;
+  return Object.fromEntries(own.map((r) => [r.pid, r.price]));
+}
 
 async function productMap() {
   const rows = await sql`SELECT id, name, unit, price::float, is_out FROM products`;
@@ -48,9 +60,11 @@ async function ordersSubmit(role, { items }) {
   if (client && client.st === 'susp') throw httpError(403, 'حساب منشأتك موقوف — لا يمكن إرسال طلبات');
 
   const pm = await productMap();
+  const clientId = sessionClientId(role);
+  const own = await pricesFor(clientId);
   const clean = items
     .filter((i) => pm[i.pid] && !pm[i.pid].is_out && Number(i.qty) > 0)
-    .map((i) => ({ pid: i.pid, qty: Math.min(999, Math.floor(Number(i.qty))) }));
+    .map((i) => ({ pid: i.pid, qty: Math.min(999, Math.floor(Number(i.qty))), price: own[i.pid] ?? pm[i.pid].price }));
   if (!clean.length) throw httpError(400, 'لا أصناف صالحة في السلة');
 
   // مسار الطلب حسب الدور: المالك/الممنوحون → مباشرة إلى B2B؛ مدير العمليات → تعميد المشتريات؛ العامل → المسار الكامل
@@ -65,6 +79,12 @@ async function ordersSubmit(role, { items }) {
   await sql`INSERT INTO orders (id, by_user, branch, date_label, st, items, stamps, log)
             VALUES (${id}, ${ROLES[role].user}, ${'فرع العليا'}, 'الآن', ${startSt},
                     ${JSON.stringify(clean)}, ${JSON.stringify(stamps)}, ${JSON.stringify(log)})`;
+  // أعمدة التكامل تُكتب فقط عند تفعيله (بعد ترحيل المخطط) — والمنصة تعمل على المخطط السابق ما دام مطفأ
+  if (integrationOn()) {
+    await sql`UPDATE orders SET client_id = ${clientId} WHERE id = ${id}`;
+    // طلب معتمد مباشرة (المالك/الممنوح) → يذهب لنظام العمليات للتنفيذ
+    if (direct) await emitOrderConfirmed(await getOrder(id), role);
+  }
 
   const notifTo = direct ? ['ops', 'fin'] : role === 'ops' ? ['owner'] : ['ops'];
   const notifTxt = direct
@@ -84,6 +104,7 @@ async function ordersApprove(role, { id, qty }) {
   if (o.st === 'ops' && !canFirst) throw httpError(403, 'تعميد هذه المرحلة لمدير العمليات');
   if (o.st === 'purch' && !canFinal) throw httpError(403, 'التعميد النهائي للمالك / المشتريات');
   if (!['ops', 'purch', 'b2b', 'hold'].includes(o.st)) throw httpError(400, 'الطلب ليس في مرحلة تعميد');
+  if (o.st === 'b2b' || o.st === 'hold') opsOwned(o);
   const pm = await productMap();
 
   // الأصناف المحذوفة تبقى بكمية صفر — تظهر للجميع ويمكن لأي معمِّد لاحق إرجاعها
@@ -131,6 +152,8 @@ async function ordersApprove(role, { id, qty }) {
   const log = [...o.log, logEntry(role, dtx ? `${dtx} ثم ${actTxt}` : actTxt)];
   await sql`UPDATE orders SET st = ${st}, items = ${JSON.stringify(items)},
             stamps = ${JSON.stringify(stamps)}, log = ${JSON.stringify(log)} WHERE id = ${id}`;
+  // التعميد النهائي → يذهب لنظام العمليات للتنفيذ
+  if (o.st === 'purch' && st === 'b2b') await emitOrderConfirmed(await getOrder(id), role);
 
   if ((o.st === 'b2b' || o.st === 'hold') && role === 'b2b' && changed) {
     await notify(['worker', 'ops', 'owner', 'frz', 'frzs'], 'طلبات', `عدّل B2B كميات الطلب ${id} — يستمر التجهيز دون إعادة تعميد`);
@@ -149,7 +172,10 @@ async function ordersReject(role, { id, reason }) {
   const o = await getOrder(id);
   const rejAt = o.st === 'ops' ? 1 : o.st === 'purch' ? 2 : 4;
   const log = [...o.log, logEntry(role, `رفض الطلب — ${text}`)];
+  if (['ship', 'done', 'short', 'rej'].includes(o.st)) throw httpError(400, 'لا يمكن رفض طلب خرج للتوصيل أو انتهى');
   await sql`UPDATE orders SET st = 'rej', reason = ${text}, rej_at = ${rejAt}, log = ${JSON.stringify(log)} WHERE id = ${id}`;
+  // طلب في يد العمليات: يُطلب الإلغاء هناك (يُفرج الحجز قبل التجهيز، وبعده يلزم قرار ويُبلَّغ الرد)
+  if (sentToOps(o)) await emit('sales_order.cancelled', id, { id, reason: text });
   await notify(['worker', 'ops'], 'اعتمادات', `رُفض ${id} — ${text}`);
   return `رُفض ${id} وأُرسل السبب لمقدّم الطلب`;
 }
@@ -159,6 +185,7 @@ async function ordersHold(role, { id, reason }) {
   const text = (reason || '').trim();
   if (text.length < 5) throw httpError(400, 'سبب التعليق إلزامي — يظهر للعميل نصًا');
   const o = await getOrder(id);
+  opsOwned(o);
   const log = [...o.log, logEntry(role, `علّق الطلب — ${text}`)];
   await sql`UPDATE orders SET st = 'hold', hold_reason = ${text}, log = ${JSON.stringify(log)} WHERE id = ${id}`;
   await notify(['worker', 'ops', 'owner', 'frz'], 'طلبات', `علّق B2B الطلب ${id} — ${text}`);
@@ -168,6 +195,7 @@ async function ordersHold(role, { id, reason }) {
 async function ordersResume(role, { id }) {
   if (role !== 'b2b') throw httpError(403, 'استئناف الطلبات صلاحية B2B');
   const o = await getOrder(id);
+  opsOwned(o);
   const log = [...o.log, logEntry(role, 'استأنف تجهيز الطلب')];
   await sql`UPDATE orders SET st = 'b2b', hold_reason = NULL, log = ${JSON.stringify(log)} WHERE id = ${id} AND st = 'hold'`;
   return `استؤنف تجهيز ${id}`;
@@ -178,6 +206,7 @@ async function ordersAdvance(role, { id }) {
   const o = await getOrder(id);
   // طلب النواقص التابع يُرسل من حالة التعليق فور توفر أصنافه، وتصدر له فاتورة مستقلة
   if (!(o.st === 'b2b' || (o.backorder && o.st === 'hold'))) throw httpError(400, 'الطلب ليس قيد التجهيز');
+  opsOwned(o);
   const stamps = [...o.stamps];
   stamps[4] = nowLabel();
   const log = [...o.log, logEntry(role, o.backorder ? 'اعتمد توفر الأصناف وأرسل الطلب للتوصيل بفاتورة مستقلة' : 'أرسل الطلب للتوصيل')];
@@ -209,6 +238,12 @@ async function ordersReceive(role, { id, recv }) {
   const shorts = o.items.filter((i) => i.qty > 0 && recv?.[i.pid]?.short);
   const stamps = [...o.stamps];
   stamps[5] = nowLabel();
+  // إقرار الاستلام يُبلَّغ للعمليات وتُقارن الكميات بإثبات التسليم
+  if (sentToOps(o)) {
+    const got = (i) => (recv?.[i.pid]?.short ? Math.min(i.qty, Math.max(0, Math.floor(Number(recv[i.pid].recv ?? 0)))) : i.qty);
+    await emit('sales_order.received', id, { id, result: shorts.length ? 'short' : 'done',
+      lines: o.items.filter((i) => i.qty > 0).map((i) => ({ productId: i.pid, receivedQty: got(i) })) });
+  }
   const log = [...o.log, logEntry(role, shorts.length ? 'أكّد الاستلام بنواقص وفُتحت تذكرة' : 'أكّد الاستلام الكامل')];
   await sql`UPDATE orders SET log = ${JSON.stringify(log)} WHERE id = ${id}`;
   let msg;
@@ -1077,4 +1112,18 @@ export const COMMANDS = {
   'branches.add': branchesAdd,
   'branches.toggle': branchesToggle,
   'branches.delete': branchesDelete,
+  'integration.sync': integrationSync,
 };
+
+// ============ التكامل مع نظام العمليات ============
+
+/** B2B: دورة تكامل يدوية — يرسل العملاء/الأصناف المتغيرة والأحداث المتأخرة ويحدّث المتاح للبيع */
+async function integrationSync(role) {
+  if (role !== 'b2b') throw httpError(403, 'التكامل صلاحية B2B');
+  if (!integrationOn()) throw httpError(400, 'التكامل مع نظام العمليات غير مفعّل على هذه البيئة');
+  const { runCycle } = await import('./integration.js');
+  const r = await runCycle();
+  return `مزامنة العمليات: ${r.master.customers} عميل و${r.master.products} صنف تغيّروا، أُرسل ${r.delivered.sent} حدث`
+    + (r.delivered.failed || r.delivered.dead ? ` (تعثّر ${r.delivered.failed + r.delivered.dead})` : '')
+    + (r.stock.error ? ` — تعذّر تحديث المتاح: ${r.stock.error}` : ` — حُدّث المتاح لـ ${r.stock.updated} صنف`);
+}

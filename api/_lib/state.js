@@ -1,5 +1,6 @@
 // بناء لقطة الحالة الكاملة التي تتغذى عليها الواجهة
 import { sql, SAMPLE_CR } from './db.js';
+import { enabled as integrationOn, opsStatusLabel } from './integration.js';
 
 export async function snapshot() {
   const [products, orders, walletRows, txs, invoices, tickets, prodReqs, frs, clients, users, branches, lists, notifs, topupReqs, clientProds, newClients, rolesMatrix, finReqs, colFiles] =
@@ -24,6 +25,12 @@ export async function snapshot() {
       sql`SELECT id, client_id, kind, amt::float, months, to_date, note, st, file_id, date_label FROM fin_reqs ORDER BY created_at DESC`,
       sql`SELECT id, client_id, inv, ref, amt::float, orig_amt::float, created, due, late_days, stage, promise, due_hist, log, st FROM col_files ORDER BY created_at DESC`,
     ]);
+
+  // المتاح للبيع كما يحسبه نظام العمليات (نسخة عرض) — فقط عند تفعيل التكامل (الجدول يُنشأ مع ترحيله)
+  const opsStock = integrationOn()
+    ? Object.fromEntries((await sql`SELECT pid, mapped, atp, incoming, incoming_eta, as_of FROM ops_stock`).map((r) => [r.pid,
+      { mapped: r.mapped, atp: r.atp, incoming: r.incoming, eta: r.incoming_eta, asOf: r.as_of }]))
+    : null;
 
   const w = walletRows[0] || { bal: 0, cr_limit: 0, used: 0 };
   const extraNotifs = {};
@@ -52,7 +59,10 @@ export async function snapshot() {
       ...(o.hold_reason ? { holdReason: o.hold_reason } : {}),
       ...(o.rej_at != null ? { rejAt: o.rej_at } : {}),
       ...(o.ticket_id ? { ticket: o.ticket_id } : {}),
+      // التنفيذ في نظام العمليات (يظهر فقط للطلبات المرسلة له)
+      ...(o.ops_sent_at ? { ops: { ref: o.ops_ref, status: o.ops_status, label: opsStatusLabel(o.ops_status), eta: o.ops_eta, events: o.ops_events || [] } } : {}),
     })),
+    opsStock,
     wallet: {
       bal: Number(w.bal), limit: Number(w.cr_limit), used: Number(w.used),
       hist: txs.filter((t) => t.kind === 'tx').map((t) => ({ t: t.t, d: t.d, amt: Number(t.amt) })),

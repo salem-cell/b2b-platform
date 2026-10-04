@@ -18,6 +18,19 @@ export function showPricesFor(role) {
   return role !== 'worker' || POLICY.workerSeesPrices;
 }
 
+/**
+ * المتاح كما يحسبه نظام العمليات (لا مخزون وهمي): متوفر / كمية محدودة / ينفد مع موعد التوريد إن وُجد.
+ * الكمية الدقيقة تظهر لفريق B2B فقط؛ العميل يرى الحالة. بلا تكامل أو صنف غير مربوط → لا يُعرض شيء.
+ */
+function stockLine(st, p) {
+  const s = st.opsStock?.[p.id];
+  if (!s || !s.mapped || s.atp == null) return '';
+  const qty = st.role === 'b2b' ? ` <span class="num">(${s.atp})</span>` : '';
+  if (s.atp > 20) return `<div style="font-size:10px;font-weight:700;color:#1d7a3e;margin-top:4px">متوفر${qty}</div>`;
+  if (s.atp > 0) return `<div style="font-size:10px;font-weight:700;color:#b26a00;margin-top:4px">كمية محدودة${qty}</div>`;
+  return `<div style="font-size:10px;font-weight:700;color:#b42318;margin-top:4px">غير متوفر حاليًا${s.eta ? ` — يتوفر ${esc(s.eta)}` : ''}</div>`;
+}
+
 function productCard(st, p, canOrder, showPrices) {
   const qty = st.cart[p.id] || 0;
   const inCart = canOrder && qty > 0;
@@ -29,6 +42,7 @@ function productCard(st, p, canOrder, showPrices) {
       </div>
       <div class="prod-name">${esc(p.name)}</div>
       <div class="prod-unit">${esc(p.unit)}</div>
+      ${stockLine(st, p)}
       ${inCart
         ? `<div class="mt-9">${stepper(qty, 'cartInc', 'cartDec', p.id, { cyan: true })}</div>`
         : `<div class="flex-center mt-9">
