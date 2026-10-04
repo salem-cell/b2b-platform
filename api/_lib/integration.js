@@ -296,8 +296,10 @@ export async function runCycle() {
   if (c.orders) for (const o of missed) await emitOrderConfirmed(o, 'repair');
   const master = await syncMasterData();
   const delivered = await flush({ limit: 100, budgetMs: 20000 });
-  const stock = await refreshStock();
-  return { ran: true, repaired: missed.length, master, delivered, stock };
+  // تعذّر قراءة المتاح (مثل بدء بارد للعمليات يتجاوز المهلة) لا يُفشل الدورة — يُعاد في الدورة التالية
+  let stock;
+  try { stock = await refreshStock(); } catch (e) { stock = { updated: 0, error: e.message || 'unreachable' }; }
+  return { ran: true, repaired: c.orders ? missed.length : 0, master, delivered, stock };
 }
 
 /** المتاح للبيع لكل الأصناف من العمليات (للعرض في الكتالوج — العمليات تحسب، المبيعات تعرض فقط) */
