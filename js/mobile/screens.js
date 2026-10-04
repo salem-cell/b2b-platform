@@ -17,8 +17,10 @@ import { showPricesFor, filterProducts } from '../pages/catalog.js';
 import { rowAction } from '../pages/orders.js';
 import { ticketChip } from '../pages/b2b.js';
 import { homeHeader, pushHeader } from './shell.js';
+import { persona, firstBranch } from '../core/session.js';
+import { loginChip } from '../ui.js';
 
-const orgCrOf = (st) => ORG_CR[st.role] || DEFAULT_CR;
+const orgCrOf = (st) => esc((st.me || {}).cr || '—');
 
 function mChips(names, active, action) {
   return `<div class="m-chips">${names.map((n) => `
@@ -76,25 +78,23 @@ function walletHero(st, big = false) {
 
 // ============ الرئيسية لكل دور ============
 export function renderMHome(st) {
-  const R = ROLES[st.role];
+  const R = persona(st);
   const showPrices = showPricesFor(st.role);
   const opsPend = st.orders.filter((o) => o.st === 'ops');
   const purchPend = st.orders.filter((o) => o.st === 'purch');
   const shipPend = st.orders.filter((o) => o.st === 'ship');
+  const me = st.me || {};
   const branchName = st.role === 'fr' ? 'شبكة الفرنشايز'
-    : st.role === 'frz' ? 'مطاعم الريف الشمالي'
-    : st.role === 'frzs' ? 'الشرقية للفرنشايز'
-    : st.role === 'b2b' ? 'مركز التوزيع — الرياض' : 'فرع العليا';
+    : st.role === 'b2b' ? 'مركز التوزيع — الرياض'
+    : ['frz', 'frzs'].includes(st.role) ? (me.org || '')
+    : (firstBranch(me) && firstBranch(me) !== 'الإدارة' ? firstBranch(me) : (me.org || ''));
   const greeting = st.role === 'b2b' ? 'مركز عمليات B2B' : `مساء الخير، ${R.user.split(' ')[0] === 'م.' ? R.user.split(' ').slice(0, 2).join(' ') : R.user.split(' ')[0]}`;
 
   const parts = [];
 
   // بانر الإيقاف
-  const clientRoles = ['worker', 'ops', 'owner', 'fin'];
-  const superClient = st.clients.find((c) => c.id === 6);
-  const suspended = (clientRoles.includes(st.role) && st.clients[0].st === 'susp')
-    || (st.role === 'frz' && st.clients[1].st === 'susp')
-    || (st.role === 'frzs' && superClient && superClient.st === 'susp');
+  // منشأة الحساب نفسها موقوفة (من هوية الجلسة — لا أرقام عملاء ثابتة)
+  const suspended = !!(st.me && st.me.suspended);
   if (suspended) {
     parts.push(`
       <div class="banner banner-danger" style="margin:16px 18px 0;border-width:1.5px;border-radius:16px;padding:14px 16px">
@@ -251,7 +251,7 @@ export function renderMHome(st) {
             <div class="grow"></div>
             <div style="font-size:10.5px;color:var(--c-faint)">${esc(o.date)}</div>
           </div>
-          <div style="font-size:11.5px;color:var(--c-muted);margin-top:6px">مطاعم البلدة — ${esc(o.branch)} · ${o.items.length} أصناف · <span class="num" style="font-weight:700;color:var(--c-ink)">${fmt(orderTotal(o))}</span> ر.س</div>
+          <div style="font-size:11.5px;color:var(--c-muted);margin-top:6px">${esc(((st.clients || []).find((c) => c.id === o.clientId) || {}).name || 'واتس اب')} — ${esc(o.branch)} · ${o.items.length} أصناف · <span class="num" style="font-weight:700;color:var(--c-ink)">${fmt(orderTotal(o))}</span> ر.س</div>
           <div class="flex gap-8" style="margin-top:12px">
             ${o.st !== 'hold'
               ? `<button class="btn btn-primary grow" style="height:44px;border-radius:12px;font-size:12.5px" data-action="b2bAdvance" data-arg="${o.id}">جاهز — إرسال للتوصيل</button>`
@@ -623,7 +623,7 @@ export function renderMTickets(st) {
 
 // ============ المزيد ============
 export function renderMMore(st) {
-  const R = ROLES[st.role];
+  const R = persona(st);
   const pendReqs = st.prodReqs.filter((r) => r.st === 'pend').length;
   const items = [{ l: 'اللستات المحفوظة', d: `${st.lists.length} لستات`, a: 'mPushLists' }];
   if (CAN_REQUEST.includes(st.role)) items.push({ l: 'اقتراح منتجات جديدة', d: pendReqs ? `${pendReqs} قيد المراجعة` : '', a: 'mPushMyReqs' });
@@ -668,6 +668,11 @@ export function renderMMore(st) {
             <div class="grow" style="font-size:13px;font-weight:700">اللغة</div>
             <div style="font-size:11px;font-weight:800;color:var(--c-purple);background:var(--c-purple-soft);border-radius:8px;padding:4px 10px">عربي · E</div>
           </div>
+          <div class="flex-center gap-10 clickable" style="padding:0 16px;min-height:52px;border-bottom:1px solid var(--c-divider);cursor:pointer" data-action="openPinChange">
+            <div class="grow" style="font-size:13px;font-weight:700">تغيير الرمز السري</div>
+            <div class="num" style="font-size:11px;color:var(--c-faint)" dir="ltr">${esc((st.me || {}).phone || '')}</div>
+            ${ICONS.chevronL()}
+          </div>
           <div class="flex-center gap-10 clickable" style="padding:0 16px;min-height:52px;border-bottom:1px solid var(--c-divider);cursor:pointer" data-action="rowSoon">
             <div class="grow" style="font-size:13px;font-weight:700">تفضيلات الإشعارات</div>
             ${ICONS.chevronL()}
@@ -677,7 +682,7 @@ export function renderMMore(st) {
               <div class="grow" style="font-size:13px;font-weight:700">السجل التجاري</div>
               <div class="num" style="font-size:11px;color:var(--c-muted)">${orgCrOf(st)}</div>
             </div>
-            <div class="banner banner-warn mt-9" style="border-radius:11px;padding:9px 12px;font-size:10.5px;line-height:1.8">ينتهي في 12 سبتمبر 2026 — يُعلَّق الحساب تلقائيًا فور الانتهاء حتى تحديث السجل.</div>
+            <div style="font-size:10.5px;color:var(--c-faint);margin-top:7px;line-height:1.8">السجل مرتبط بحساب المنشأة — لتحديثه تواصل مع فريق B2B.</div>
           </div>
         </div>
         <button class="btn btn-block mt-14" style="background:#fff;border:1px solid var(--c-card-border);color:var(--c-danger);font-size:13px;min-height:52px;border-radius:18px" data-action="logout">تسجيل الخروج</button>
@@ -1074,11 +1079,11 @@ export function renderMUsers(st) {
               <div style="width:40px;height:40px;border-radius:999px;background:var(--c-purple-soft);color:var(--c-purple);font-size:15px;font-weight:800;display:flex;align-items:center;justify-content:center;flex:none">${esc((u.name || ' ')[0])}</div>
               <div class="grow" style="min-width:0">
                 <div style="font-size:12.5px;font-weight:800">${esc(u.name)}</div>
-                <div style="font-size:10px;color:var(--c-faint);margin-top:3px">${esc(u.branch)}${u.email ? ` · <span class="num" dir="ltr">${esc(u.email)}</span>` : ''}</div>
+                <div style="font-size:10px;color:var(--c-faint);margin-top:3px">${esc(u.branch)}${u.phone ? ` · <span class="num" dir="ltr">${esc(u.phone)}</span>` : ''}</div>
               </div>
               <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">
                 ${chip(STAFF_ROLE_LABEL[u.role] || u.role, STAFF_ROLE_CHIP[u.role] || 'chip-gray')}
-                ${pend ? chip('بانتظار التفعيل', 'chip-info') : off ? chip('موقوف', 'chip-danger') : ''}
+                ${pend ? chip('بانتظار التفعيل', 'chip-info') : off ? chip('موقوف', 'chip-danger') : loginChip(u)}
               </div>
             </div>`;
           }).join('')}

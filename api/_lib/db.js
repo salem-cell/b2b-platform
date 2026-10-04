@@ -1,7 +1,21 @@
 // اتصال Neon Postgres (سيرفرلس عبر HTTP)
 import { neon } from '@neondatabase/serverless';
 
-export const sql = neon(process.env.DATABASE_URL);
+/**
+ * تطوير/اختبار محلي فقط: LOCAL_PG_URL يشغّل نفس الكود على Postgres محلي (عبر pg) بواجهة neon نفسها:
+ * sql`…` (قالب) و sql('نص', [قيم]). لا يُضبط على Vercel أبدًا — هناك neon عبر DATABASE_URL.
+ */
+async function localSql(url) {
+  const { default: pg } = await import('pg');
+  const pool = new pg.Pool({ connectionString: url, max: 5 });
+  return (strings, ...values) => {
+    if (typeof strings === 'string') return pool.query(strings, values[0] || []).then((r) => r.rows);
+    const text = strings.reduce((acc, s, i) => acc + s + (i < values.length ? `$${i + 1}` : ''), '');
+    return pool.query(text, values).then((r) => r.rows);
+  };
+}
+
+export const sql = process.env.LOCAL_PG_URL ? await localSql(process.env.LOCAL_PG_URL) : neon(process.env.DATABASE_URL);
 
 /** قيمة تسلسل جديدة (order/ticket/cn/req) */
 export async function nextSeq(key) {
@@ -14,10 +28,13 @@ export function nowLabel() {
   return new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Riyadh' }).format(new Date());
 }
 
-/** بث إشعار لأدوار محددة */
-export async function notify(roles, c, body) {
+/**
+ * إشعار لأدوار محددة. clientId = المنشأة المعنية: أدوار العملاء ترى الإشعار فقط إن كان لمنشأتها
+ * (أو عامًّا بلا منشأة)؛ إشعارات B2B لا تتقيد بمنشأة.
+ */
+export async function notify(roles, c, body, clientId = null) {
   for (const role of roles) {
-    await sql`INSERT INTO notifs (role, c, body, t) VALUES (${role}, ${c}, ${body}, 'الآن')`;
+    await sql`INSERT INTO notifs (role, c, body, t, client_id) VALUES (${role}, ${c}, ${body}, 'الآن', ${role === 'b2b' ? null : clientId})`;
   }
 }
 

@@ -4,14 +4,27 @@
 //   GET  /api/bot?action=products&q=حليب[&client_id=1]   → { data: [ {id,name,unit,cat,price,stock,img} ] }
 //   GET  /api/bot?action=product&id=P-1042[&client_id=1] → { data: {...} }
 //   POST /api/bot { action:'order', items:[{pid,qty}], phone, name?, note?, quote? } → { data: { id, total } }
+//
+// المنشأة: رقم الجوال المسجّل لحساب في المنصة يربط الطلب بمنشأة صاحبه (أسعاره المتفق عليها، ويُرسل للتنفيذ).
+// رقم غير مسجّل → طلب بلا منشأة يعالجه فريق B2B يدويًا (لا يُرسل لنظام العمليات).
+import { timingSafeEqual } from 'node:crypto';
 import { sql, nextSeq, nowLabel, notify } from './_lib/db.js';
 import { handler, send, readBody, httpError } from './_lib/http.js';
+import { normPhone } from './_lib/auth.js';
 
 function auth(req) {
-  const expected = String(process.env.BOT_API_KEY || '').trim();
-  const provided = String(req.headers['x-bot-key'] || '').trim();
-  if (!expected) throw httpError(500, 'BOT_API_KEY غير مضبوط في إعدادات الخادم');
-  if (provided !== expected) throw httpError(401, 'مفتاح البوت غير صحيح');
+  const expected = Buffer.from(String(process.env.BOT_API_KEY || '').trim());
+  const provided = Buffer.from(String(req.headers['x-bot-key'] || '').trim());
+  if (!expected.length) throw httpError(500, 'BOT_API_KEY غير مضبوط في إعدادات الخادم');
+  if (provided.length !== expected.length || !timingSafeEqual(provided, expected)) throw httpError(401, 'مفتاح البوت غير صحيح');
+}
+
+/** حساب المنصة المسجّل بهذا الجوال (فعّال ومنشأته غير موقوفة) — أو null */
+async function accountByPhone(phone) {
+  const [u] = await sql`
+    SELECT u.id, u.name, u.branch, u.client_id FROM org_users u JOIN clients c ON c.id = u.client_id
+    WHERE u.phone = ${normPhone(phone)} AND u.st = 'ok' AND c.st = 'ok'`;
+  return u || null;
 }
 
 /** تطبيع عربي بسيط للبحث (همزات/تاء مربوطة/ألف لام) */
@@ -76,8 +89,11 @@ export default handler(async (req, res) => {
   if (req.method === 'GET' && action === 'order_status') {
     const id = (url.searchParams.get('id') || '').trim().toUpperCase();
     const phone = (url.searchParams.get('phone') || '').replace(/\D/g, '');
-    const [o] = await sql`SELECT id, by_user, st, items, stamps, log FROM orders WHERE id = ${id}`;
-    if (!o || !phone || !String(o.by_user).includes(phone)) throw httpError(404, 'لا يوجد طلب بهذا الرقم لهذا العميل');
+    const [o] = await sql`SELECT id, by_user, st, items, stamps, log, client_id FROM orders WHERE id = ${id}`;
+    const acct = phone ? await accountByPhone(phone) : null;
+    const mine = !!o && !!phone && (String(o.by_user).includes(phone)
+      || (acct && o.client_id != null && Number(o.client_id) === Number(acct.client_id)));
+    if (!mine) throw httpError(404, 'لا يوجد طلب بهذا الرقم لهذا العميل');
     const pm = await (async () => {
       const rows = await sql`SELECT id, name FROM products`;
       return Object.fromEntries(rows.map((p) => [p.id, p.name]));
@@ -109,19 +125,24 @@ export default handler(async (req, res) => {
     const seq = await nextSeq('order');
     const id = `ORD-${seq}`;
     const n = nowLabel();
-    const who = body.name ? `${body.name} (واتس اب ${phone})` : `واتس اب ${phone}`;
+    const acct = await accountByPhone(phone);
+    const clientId = acct ? Number(acct.client_id) : null;
+    const who = acct ? `${acct.name} (واتس اب ${phone})` : body.name ? `${String(body.name).slice(0, 80)} (واتس اب ${phone})` : `واتس اب ${phone}`;
     const log = [{
       who, role: 'عميل واتس اب',
       txt: `طلب عبر بوت واتس اب${body.quote ? ` — عرض ${body.quote}` : ''} (${clean.length} أصناف)${body.note ? ` — ${body.note}` : ''}`,
       t: n,
     }];
     // طلبات واتس اب تدخل مباشرة مرحلة تجهيز B2B (مثل طلبات المالك)
-    await sql`INSERT INTO orders (id, by_user, branch, date_label, st, items, stamps, log)
-              VALUES (${id}, ${who}, ${'واتس اب'}, 'الآن', 'b2b',
-                      ${JSON.stringify(clean)}, ${JSON.stringify([n, n, n, n, '', ''])}, ${JSON.stringify(log)})`;
-    await notify(['b2b', 'ops'], 'اعتمادات', `طلب جديد من واتس اب ${id} — ${who}`);
+    // منشأة معروفة: الطلب يحمل منشأتها وفرع صاحب الحساب (فيلتقطه التكامل مع العمليات في دورته)
+    await sql`INSERT INTO orders (id, by_user, branch, date_label, st, items, stamps, log, client_id)
+              VALUES (${id}, ${who}, ${acct ? acct.branch : 'واتس اب'}, 'الآن', 'b2b',
+                      ${JSON.stringify(clean)}, ${JSON.stringify([n, n, n, n, '', ''])}, ${JSON.stringify(log)}, ${clientId})`;
+    await notify(['b2b'], 'اعتمادات', `طلب جديد من واتس اب ${id} — ${who}${acct ? '' : ' (رقم غير مسجّل — يُعالج يدويًا)'}`);
+    if (clientId != null) await notify(['ops', 'owner'], 'اعتمادات', `طلب جديد من واتس اب ${id} — ${who}`, clientId);
 
-    const total = clean.reduce((s, i) => s + pm[i.pid].price * i.qty, 0);
+    const cp = await clientPrices(clientId);
+    const total = clean.reduce((s, i) => s + (cp[i.pid] ?? pm[i.pid].price) * i.qty, 0);
     return send(res, 200, { data: { id, total: Math.round(total * 100) / 100, items: clean.length } });
   }
 

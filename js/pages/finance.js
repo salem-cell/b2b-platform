@@ -191,8 +191,8 @@ function ledgerRows(list, pad = '13px 18px') {
 
 /** بانر التحويلات البنكية المعلقة لمنشأة الجلسة */
 function pendingTopupBanner(st) {
-  const myOrg = (ROLES[st.role] || {}).org;
-  const mine = (st.topupReqs || []).filter((r) => r.org === myOrg);
+  const myId = (st.me || {}).clientId;
+  const mine = myId == null ? [] : (st.topupReqs || []).filter((r) => r.clientId === myId);
   if (!mine.length) return '';
   return `
     <div class="banner banner-warn" style="margin-bottom:14px;padding:12px 16px">
@@ -208,7 +208,7 @@ function pendingTopupBanner(st) {
 function renderWalletSeg(st) {
   const W = st.wallet;
   const crPct = Math.round(W.used / W.limit * 100);
-  const orgCr = ORG_CR[st.role] || DEFAULT_CR;
+  const orgCr = (st.me || {}).cr || '—';
 
   // v7: ذمم منشأة الجلسة — ملفات تحصيلها وطلبات الأجل والمهلة (الأدوار العميلة فقط)
   const canFrq = ['owner', 'fin', 'frz', 'frzs'].includes(st.role);
@@ -421,7 +421,7 @@ export function renderFintu(st) {
     </div>`).join('');
 
   const wallets = st.clients.map((c) => {
-    const pendN = reqs.filter((r) => r.org === c.name || (c.id === 1 && r.org === 'مطاعم البلدة')).length;
+    const pendN = reqs.filter((r) => r.clientId === c.id).length;
     const frozen = c.wst === 'frozen';
     return `
     <div class="table-row clickable gap-8" style="padding:12px 18px" data-action="openClientWallet" data-arg="${c.id}">

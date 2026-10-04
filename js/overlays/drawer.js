@@ -103,6 +103,12 @@ function drawerActions(st, o) {
 
   if (canApprove) parts.push(`<button class="btn btn-primary btn-block mt-14" data-action="openApprove" data-arg="${o.id}">فتح شاشة التعميد</button>`);
   if (o.st === 'ship' && st.role === 'worker') parts.push(`<button class="btn btn-primary btn-block mt-14" data-action="openReceive" data-arg="${o.id}">بدء الاستلام</button>`);
+  // طلب يُنفَّذ في نظام العمليات: التجهيز والتعليق والإرسال للتوصيل تُدار هناك — يبقى الرفض التجاري (يُطلب الإلغاء)
+  if (o.ops && (o.st === 'b2b' || o.st === 'hold') && st.role === 'b2b') {
+    parts.push(`<div style="font-size:11px;color:var(--c-muted);line-height:1.9;margin-top:12px">يُنفَّذ هذا الطلب في نظام العمليات — حالته تتحدّث تلقائيًا أعلاه.</div>`);
+    parts.push(`<button class="btn btn-danger-outline btn-block mt-10" style="height:46px;font-size:12.5px" data-action="openReject" data-arg="${o.id}">رفض الطلب — يُطلب إلغاؤه من العمليات</button>`);
+    return parts.join('');
+  }
   if (o.st === 'b2b' && st.role === 'b2b') {
     parts.push(`<button class="btn btn-primary btn-block mt-14" data-action="b2bAdvance" data-arg="${o.id}">جاهز — إرسال للتوصيل</button>`);
     parts.push(`
@@ -122,6 +128,29 @@ function drawerActions(st, o) {
     parts.push(`<button class="btn btn-danger-outline btn-block mt-10" style="height:46px;font-size:12.5px" data-action="openReject" data-arg="${o.id}">رفض الطلب — بسبب إلزامي</button>`);
   }
   return parts.join('');
+}
+
+/** التنفيذ في نظام العمليات: الحالة كما تبلّغها العمليات + موعد توفر النواقص + خطوات التنفيذ بالترتيب */
+function opsPanel(o) {
+  if (!o.ops) return '';
+  const ev = [...(o.ops.events || [])].reverse();
+  return `
+    <div class="card" style="padding:16px 18px;margin-bottom:14px;border-color:var(--c-purple-soft)">
+      <div class="flex-center" style="gap:8px;margin-bottom:10px">
+        <div style="font-size:12.5px;font-weight:800">التنفيذ في نظام العمليات</div>
+        <div class="grow"></div>
+        ${o.ops.ref ? `<div class="num" style="font-size:10.5px;color:var(--c-muted)">${esc(o.ops.ref)}</div>` : ''}
+      </div>
+      <div style="display:inline-block;font-size:11px;font-weight:800;color:var(--c-purple);background:var(--c-purple-soft);border-radius:999px;padding:4px 12px">${esc(o.ops.label || 'أُرسل للعمليات')}</div>
+      ${o.ops.eta ? `<div style="font-size:11px;color:var(--c-muted);margin-top:8px">موعد توفر النواقص المتوقع: <span class="num" style="font-weight:700">${esc(o.ops.eta)}</span></div>` : ''}
+      ${ev.length ? `<div style="display:flex;flex-direction:column;gap:7px;margin-top:12px">
+        ${ev.map((e) => `<div class="flex gap-10" style="font-size:11px;line-height:1.8">
+          <div style="width:7px;height:7px;border-radius:999px;background:var(--c-purple);margin-top:7px;flex:none"></div>
+          <div class="grow" style="color:#55506B">${esc(e.text || e.type)}</div>
+          <div class="num" style="font-size:9.5px;color:var(--c-faint);white-space:nowrap">${esc(new Date(e.at).toLocaleString('ar-SA', { hour: '2-digit', minute: '2-digit', day: 'numeric', month: 'short' }))}</div>
+        </div>`).join('')}
+      </div>` : ''}
+    </div>`;
 }
 
 /** سجل الإجراءات: من فعل ماذا ومتى */
@@ -154,7 +183,9 @@ export function renderDrawer(st) {
   if (!o) return '';
 
   const showPrices = showPricesFor(st.role);
-  const sub = o.items.reduce((s, i) => s + PRODUCT_MAP[i.pid].price * i.qty, 0);
+  // سعر لحظة الطلب إن حُفظ مع السطر (الطلبات الأحدث) وإلا سعر القائمة الحالي
+  const unit = (i) => (i.price ?? PRODUCT_MAP[i.pid].price);
+  const sub = o.items.reduce((s, i) => s + unit(i) * i.qty, 0);
 
   return `
     <div class="drawer-wrap">
@@ -170,6 +201,7 @@ export function renderDrawer(st) {
         </div>
         <div class="drawer-body">
           ${drawerBanners(st, o)}
+          ${opsPanel(o)}
           ${actionLog(o)}
           <div style="background:var(--c-subtle);border:1px solid var(--c-divider);border-radius:16px;padding:16px 18px">
             <div style="font-size:12.5px;font-weight:800;margin-bottom:13px">رحلة الطلب</div>
@@ -185,7 +217,7 @@ export function renderDrawer(st) {
                   <div style="font-size:12px;font-weight:700;${i.qty === 0 ? 'text-decoration:line-through' : ''}">${esc(p.name)}</div>
                   <div style="font-size:10px;color:var(--c-faint);margin-top:2px">${i.qty === 0 ? 'حُذف من الطلب' : `${esc(p.unit)} × <span class="num" style="font-weight:700">${i.qty}</span>`}</div>
                 </div>
-                ${showPrices && i.qty > 0 ? `<div class="num" style="font-size:12px;font-weight:700">${fmt(p.price * i.qty)}</div>` : ''}
+                ${showPrices && i.qty > 0 ? `<div class="num" style="font-size:12px;font-weight:700">${fmt(unit(i) * i.qty)}</div>` : ''}
               </div>`;
             }).join('')}
             ${showPrices ? `

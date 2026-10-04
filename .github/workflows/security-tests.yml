@@ -1,0 +1,56 @@
+# Login (phone + PIN, lockout, forced PIN change) and tenant isolation, exercised over HTTP against a throwaway
+# PostgreSQL. See docs/SECURITY.md. The values below are CI-only test values for the ephemeral database of this job —
+# they are not used by any deployed environment.
+name: security-tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  security:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: b2b_ci
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U ci -d b2b_ci" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      LOCAL_PG_URL: postgres://ci:ci@127.0.0.1:5432/b2b_ci
+      PORT: '3100'
+      SEED_PIN: '4826'
+      PIN_PEPPER: ci-only-pepper
+      ADMIN_KEY: ci-only-admin-key
+      MIGRATE_KEY: ci-only-migrate-key
+      BOT_API_KEY: ci-only-bot-key
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Syntax check (API + frontend modules)
+        run: |
+          set -e
+          for f in api/*.js api/*/*.js js/*.js js/*/*.js scripts/*.js scripts/*.mjs; do node --check "$f"; done
+      - name: Start the local server
+        run: |
+          node scripts/local-server.mjs > server.log 2>&1 &
+          for i in $(seq 1 30); do curl -sf -o /dev/null http://127.0.0.1:3100/index.html && exit 0; sleep 1; done
+          cat server.log; exit 1
+      - name: Login + tenant isolation tests
+        run: node scripts/test-security.mjs http://127.0.0.1:3100
+      - name: Server log on failure
+        if: failure()
+        run: cat server.log

@@ -1,0 +1,33 @@
+# Integration heartbeat: asks B2B OPS to run one integration cycle (retries, waiting backorders, reconciliation), which
+# in turn triggers this platform's own cycle. Does nothing until the repository VARIABLE `OPS_HEARTBEAT_URL` is set
+# (e.g. https://<ops-host>) together with the SECRETS `OPS_SCHEDULER_KEY_ID` and `OPS_SCHEDULER_KEY_SECRET`
+# (the pair configured in OPS as INTEGRATION_KEYS_SCHEDULER). See docs/INTEGRATION.md.
+name: integration-cycle
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  heartbeat:
+    if: ${{ vars.OPS_HEARTBEAT_URL != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Signed heartbeat
+        env:
+          OPS_URL: ${{ vars.OPS_HEARTBEAT_URL }}
+          KEY_ID: ${{ secrets.OPS_SCHEDULER_KEY_ID }}
+          KEY_SECRET: ${{ secrets.OPS_SCHEDULER_KEY_SECRET }}
+        run: |
+          set -euo pipefail
+          path=/api/v1/ops/heartbeat
+          ts=$(date +%s)
+          body_hash=$(printf '' | openssl dgst -sha256 -hex | awk '{print $NF}')
+          sig=$(printf '%s\nPOST\n%s\n%s' "$ts" "$path" "$body_hash" | openssl dgst -sha256 -hmac "$KEY_SECRET" -hex | awk '{print $NF}')
+          curl -fsS --max-time 60 -X POST "${OPS_URL%/}${path}" \
+            -H "Accept: application/json" -H "X-B2B-System: scheduler" -H "X-B2B-Key-Id: ${KEY_ID}" \
+            -H "X-B2B-Timestamp: ${ts}" -H "X-B2B-Signature: ${sig}"

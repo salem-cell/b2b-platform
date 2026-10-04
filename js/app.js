@@ -7,6 +7,7 @@ import { initState, getState, setState, subscribe } from './core/store.js';
 import { patchDOM, esc } from './core/dom.js';
 import { createInitialState } from './data/seed.js';
 import * as A from './actions.js';
+import { findAccount } from './core/session.js';
 import { renderLogin } from './pages/login.js';
 import { renderShell } from './pages/shell.js';
 import { renderDashboard } from './pages/dashboard.js';
@@ -63,11 +64,10 @@ function renderApp(st) {
 const ACTIONS = {
   // تنقل وجلسة
   go: (el) => A.go(el.dataset.arg),
-  sendOtp: () => A.sendOtp(),
-  verifyOtp: () => A.verifyOtp(),
-  backPhone: () => setState({ auth: 'phone', otp: '' }),
-  pickRole: (el) => A.pickRole(el.dataset.arg),
-  switchUser: () => A.switchUser(),
+  login: () => A.login(),
+  submitNewPin: () => A.submitNewPin(),
+  openPinChange: () => setState({ modal: { k: 'pinChange' }, npOld: '', npNew: '', npNew2: '', notifOpen: false }),
+  changeMyPin: () => A.changeMyPin(),
   logout: () => A.logout(),
   closeAll: () => A.closeAll(),
   goWallet: () => { A.go('wallet'); setState({ finSeg: 'w' }); },
@@ -212,34 +212,11 @@ const ACTIONS = {
     const bi = Number(el.dataset.arg);
     A.patchClient(c.id, { branches: c.branches.filter((_, i) => i !== bi) }, `أُزيل ${c.branches[bi].name}`);
   },
-  clientAddStaff: () => {
-    const st = getState();
-    const name = (st.clStaffName || '').trim();
-    if (!name) { A.say('اكتب اسم العامل أولًا'); return; }
-    const c = st.clients.find((x) => x.id === st.clientSel);
-    A.patchClient(c.id, {
-      staff: [...c.staff, { name, role: st.clStaffRole || 'worker', branch: c.branches[0] ? c.branches[0].name : 'الإدارة', st: 'ok' }],
-    }, `أُنشئ حساب ${name} لدى ${c.name} — فعّال فورًا`, { clStaffName: '' });
-  },
-  clientToggleStaff: (el) => {
-    const st = getState();
-    const c = st.clients.find((x) => x.id === st.clientSel);
-    const ui = Number(el.dataset.arg);
-    const u = c.staff[ui];
-    const off = u.st === 'off';
-    A.patchClient(c.id, { staff: c.staff.map((s, i) => (i === ui ? { ...s, st: off ? 'ok' : 'off' } : s)) },
-      off ? `فُعّل ${u.name}` : `أُوقف ${u.name} — لا يستطيع الدخول`);
-  },
-  clientMoveStaff: (el) => {
-    const st = getState();
-    const c = st.clients.find((x) => x.id === st.clientSel);
-    const ui = Number(el.dataset.arg);
-    const u = c.staff[ui];
-    const options = c.branches.map((b) => b.name).concat(['الإدارة']);
-    const next = options[(options.indexOf(u.branch) + 1) % options.length];
-    A.patchClient(c.id, { staff: c.staff.map((s, i) => (i === ui ? { ...s, branch: next } : s)) },
-      `نُقل ${u.name} إلى ${next}`);
-  },
+  clientAddStaff: () => A.clientAddStaff(),
+  toggleAccount: (el) => A.toggleAccount(Number(el.dataset.arg)),
+  genPin: (el) => A.fillRandomPin(el.dataset.arg),
+  resetUserPin: () => A.resetUserPin(),
+  saveUserPhone: () => A.saveUserPhone(),
 
   // إدارة الكتالوج (B2B)
   toggleProductAvailability: (el) => A.toggleProductAvailability(el.dataset.arg),
@@ -345,12 +322,14 @@ const ACTIONS = {
   openOrderFromBranch: (el) => setState({ modal: null, drawer: { k: 'order', id: el.dataset.arg } }),
 
   // مستخدمون وفروع
-  openUserNew: () => setState({ modal: { k: 'userNew' } }),
+  openUserNew: () => setState({ modal: { k: 'userNew' }, usName: '', usPhone: '', usPin: '', usBranches: [] }),
   addUser: () => A.addUser(),
   openUserEdit: (el) => {
     if (el.dataset.can !== '1') { A.say('صلاحيتك تتيح إدارة حسابات العمال فقط'); return; }
-    const u = getState().users.find((x) => x.id === Number(el.dataset.arg));
-    setState({ modal: { k: 'userEdit', id: u.id }, ueRole: u.role, ueBranches: (u.branch || '').split(' · ').filter(Boolean) });
+    const u = findAccount(getState(), el.dataset.arg);
+    if (!u) return;
+    setState({ modal: { k: 'userEdit', id: u.id }, ueRole: u.role, uePhone: u.phone || '', uePin: '',
+      ueBranches: (u.branch || '').split(' · ').filter((b) => b && b !== 'الإدارة') });
   },
   setUeRole: (el) => setState({ ueRole: el.dataset.arg }),
   toggleUeBranch: (el) => {
@@ -367,10 +346,7 @@ const ACTIONS = {
   },
   confirmUser: (el) => A.setUserStatus(Number(el.dataset.arg), 'ok'),
   holdUser: (el) => A.setUserStatus(Number(el.dataset.arg), 'off'),
-  toggleUser: (el) => {
-    const u = getState().users.find((x) => x.id === Number(el.dataset.arg));
-    A.setUserStatus(u.id, u.st === 'off' ? 'ok' : 'off');
-  },
+  toggleUser: (el) => A.toggleAccount(Number(el.dataset.arg)),
   addBranch: () => A.addBranch(),
 
   // متفرقات
@@ -395,8 +371,11 @@ const ACTIONS = {
 };
 
 // ---------- تحويلات حقول الإدخال الخاصة ----------
+const digits4 = (v) => v.replace(/[^0-9]/g, '').slice(0, 4);
+const phoneChars = (v) => v.replace(/[^0-9+ ]/g, '').slice(0, 16);
 const INPUT_TRANSFORM = {
-  otp: (v) => v.replace(/[^0-9]/g, '').slice(0, 4),
+  pin: digits4, npOld: digits4, npNew: digits4, npNew2: digits4, usPin: digits4, uePin: digits4, clStaffPin: digits4,
+  phone: phoneChars, usPhone: phoneChars, uePhone: phoneChars, clStaffPhone: phoneChars,
 };
 
 // ---------- التهيئة ----------
@@ -448,7 +427,9 @@ root.addEventListener('keydown', (e) => {
   const el = e.target.closest('[data-enter]');
   if (!el) return;
   const handler = ACTIONS[el.dataset.enter];
-  if (handler) { e.preventDefault(); el.blur(); }
+  if (!handler) return;
+  e.preventDefault();
+  if (el.dataset.blur) el.blur(); else handler(el, e);
 });
 root.addEventListener('focusout', (e) => {
   const el = e.target.closest('[data-blur]');

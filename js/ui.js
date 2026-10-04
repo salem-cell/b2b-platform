@@ -57,6 +57,26 @@ export function input(field, value, placeholder, { cls = 'input', dir = '', extr
     placeholder="${esc(placeholder)}" ${dir ? `dir="${dir}"` : ''} ${extra}>`;
 }
 
+/**
+ * حقل رمز سري من 4 أرقام. visible: يظهر ما يُكتب (رمز مؤقت يكتبه المدير ليبلّغه لصاحب الحساب).
+ * enter: إجراء عند Enter.
+ */
+export function pinInput(field, value, { enter = '', visible = false, small = false } = {}) {
+  const style = small
+    ? 'height:44px;font-size:17px;letter-spacing:8px;text-align:center;font-family:var(--font-num);border-radius:11px'
+    : 'height:56px;font-size:24px;letter-spacing:14px;text-align:center;font-family:var(--font-num);border-radius:14px';
+  return input(field, value || '', '• • • •', { dir: 'ltr', type: visible ? 'text' : 'password',
+    extra: `maxlength="4" inputmode="numeric" autocomplete="off" ${enter ? `data-enter="${enter}"` : ''} style="${style}"` });
+}
+
+/** حالة دخول الحساب: بلا جوال / بلا رمز / رمز مؤقت لم يُغيَّر (فارغ = جاهز) */
+export function loginChip(u) {
+  if (!u.phone) return chip('بلا جوال', 'chip-warn');
+  if (!u.hasPin) return chip('بلا رمز', 'chip-warn');
+  if (u.mustChangePin) return chip('رمز مؤقت', 'chip-info');
+  return '';
+}
+
 /** زر إغلاق النوافذ */
 export function closeBtn() {
   return `<button class="modal-close" data-action="closeAll">${ICONS.close()}</button>`;

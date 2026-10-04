@@ -5,7 +5,8 @@
 // ============================================================
 import { esc, ICONS } from '../core/dom.js';
 import { fmt, fmt0 } from '../core/format.js';
-import { chip, orderChip, prodThumb, closeBtn, input, stepper, mapSvgLarge, mapPinAt, pinIcon } from '../ui.js';
+import { chip, orderChip, prodThumb, closeBtn, input, pinInput, loginChip, stepper, mapSvgLarge, mapPinAt, pinIcon } from '../ui.js';
+import { persona, findAccount, accountBranches, firstBranch } from '../core/session.js';
 import { findOrder, locFromPin, orderTotal } from '../actions.js';
 import { FRANCHISEE_STATUS, ROLES, CLIENT_TYPES, CLIENT_TYPE_SUB, CATEGORIES } from '../data/constants.js';
 import { PRODUCT_MAP, PRODUCTS } from '../data/products.js';
@@ -20,7 +21,7 @@ function cartModal(st) {
   return `
     <div class="modal-head">
       <div class="modal-title grow">السلة</div>
-      <div class="org-chip" style="font-size:10.5px;background:var(--c-chip-bg)">التسليم: فرع العليا</div>
+      <div class="org-chip" style="font-size:10.5px;background:var(--c-chip-bg)">التسليم: ${esc(firstBranch(st.me) || (st.me || {}).org || '')}</div>
       ${closeBtn()}
     </div>
     <div class="modal-body" style="padding:0 22px">
@@ -316,6 +317,8 @@ function invoiceDetailModal(st) {
   const v = st.invoices.find((x) => x.id === st.modal.id);
   if (!v) return '';
   const m = INVOICE_STATUS_LOCAL[v.st];
+  // المنشأة الصادرة لها الفاتورة: عميلها (B2B يرى كل العملاء) وإلا منشأة الجلسة
+  const invClient = (st.clients || []).find((c) => c.id === v.clientId) || { name: (st.me || {}).org, cr: (st.me || {}).cr };
   // الطلب المرتبط (المرجع يحتوي رقم ORD)
   const ordId = (String(v.ref).match(/ORD-[\w-]+/) || [])[0];
   const order = ordId ? st.orders.find((o) => o.id === ordId) : null;
@@ -339,9 +342,9 @@ function invoiceDetailModal(st) {
       </div>
       <div class="flex-center gap-8" style="background:var(--c-subtle);border:1px solid var(--c-divider);border-radius:12px;padding:10px 13px;margin-top:14px">
         <div style="font-size:10.5px;color:var(--c-muted)">صادرة لـ</div>
-        <div style="font-size:11.5px;font-weight:800">مطاعم البلدة</div>
+        <div style="font-size:11.5px;font-weight:800">${esc(invClient.name || '')}</div>
         <div class="grow"></div>
-        <div class="num" style="font-size:10px;color:var(--c-faint)">C.R. 4030-118842</div>
+        <div class="num" style="font-size:10px;color:var(--c-faint)">C.R. ${esc(invClient.cr || '—')}</div>
       </div>
       ${order ? `
         <div class="field-label">أصناف الفاتورة</div>
@@ -506,36 +509,51 @@ function requestNewModal(st) {
     </div>`;
 }
 
-// ---------- إضافة مستخدم ----------
+// ---------- إضافة مستخدم (جوال + رمز مؤقت) ----------
+const STAFF_ROLES = { worker: 'عامل مطعم', ops: 'مدير عمليات', fin: 'مدير مالية' };
+const pickStyle = (on, color = 'var(--c-purple)') => (on
+  ? `background:${color};color:#fff` : 'background:var(--c-subtle);color:var(--c-muted);border:1px solid var(--c-card-border)');
+const phoneField = (field, value) => input(field, value || '', '05xxxxxxxx',
+  { dir: 'ltr', type: 'tel', extra: 'inputmode="numeric" autocomplete="off" style="font-family:var(--font-num);text-align:left"' });
+const tempPinRow = (field, value) => `
+  <div class="flex gap-8">
+    <div class="grow">${pinInput(field, value, { visible: true, small: true })}</div>
+    <button class="btn btn-soft" style="height:44px;padding:0 14px;border-radius:11px;font-size:11px;color:var(--c-purple);background:var(--c-chip-bg);border:none;white-space:nowrap" data-action="genPin" data-arg="${field}">رمز عشوائي</button>
+  </div>`;
+
 function userNewModal(st) {
-  const roles = st.role === 'ops' ? { worker: 'عامل مطعم' } : { worker: 'عامل مطعم', ops: 'مدير عمليات', fin: 'مدير مالية' };
+  const team = st.role === 'b2b';
+  const roles = st.role === 'ops' ? { worker: STAFF_ROLES.worker } : STAFF_ROLES;
   const activeRole = st.role === 'ops' ? 'worker' : st.usRole;
   const branches = st.usBranches || [];
-  const hint = st.role === 'ops'
-    ? 'صلاحيتك تتيح إضافة عمال المطعم فقط — يُنشأ الحساب مباشرة ويعمل بعد تفعيلك له.'
-    : 'يُنشأ الحساب مباشرة بالإيميل وكلمة السر — يستطيع الدخول بعد تفعيلك للحساب.';
+  const hint = team
+    ? 'حساب جديد في فريق B2B — يدخل من بوابة الإدارة بجواله والرمز المؤقت مع رمز الإدارة.'
+    : st.role === 'ops'
+      ? 'صلاحيتك تتيح إضافة عمال المطعم فقط — يدخل العامل بجواله والرمز المؤقت بعد تفعيلك للحساب.'
+      : 'يدخل المستخدم برقم جواله والرمز المؤقت بعد تفعيلك للحساب، ويعيّن رمزه الخاص عند أول دخول.';
   return `
-    <div style="padding:20px 22px 22px">
+    <div style="padding:20px 22px 22px;overflow-y:auto;min-height:0">
       <div class="modal-title">إضافة مستخدم</div>
       <div style="font-size:11px;color:var(--c-muted);margin-top:3px;line-height:1.8">${hint}</div>
       <div class="mt-14">${input('usName', st.usName, 'اسم المستخدم')}</div>
-      <div class="mt-9">${input('usEmail', st.usEmail, 'الإيميل — user@company.sa', { dir: 'ltr', extra: 'style="font-family:var(--font-num);text-align:left"' })}</div>
-      <div class="mt-9">${input('usPass', st.usPass, 'كلمة السر — 6 أحرف على الأقل', { dir: 'ltr', type: 'password', extra: 'style="font-family:var(--font-num);text-align:left"' })}</div>
+      <div class="field-label" style="margin-top:12px">رقم الجوال (به يسجّل الدخول)</div>
+      ${phoneField('usPhone', st.usPhone)}
+      <div class="field-label" style="margin-top:12px">الرمز المؤقت (4 أرقام) — بلّغه للمستخدم</div>
+      ${tempPinRow('usPin', st.usPin)}
+      ${team ? '' : `
       <div class="field-label" style="margin-top:12px">أي دور يلعب هذا اليوزر؟</div>
       <div class="flex gap-7">
         ${Object.entries(roles).map(([k, label]) => `
-          <div style="flex:1;height:42px;display:flex;align-items:center;justify-content:center;border-radius:11px;font-size:11.5px;font-weight:800;cursor:pointer;${activeRole === k ? 'background:var(--c-purple);color:#fff' : 'background:var(--c-subtle);color:var(--c-muted);border:1px solid var(--c-card-border)'}"
+          <div style="flex:1;height:42px;display:flex;align-items:center;justify-content:center;border-radius:11px;font-size:11.5px;font-weight:800;cursor:pointer;${pickStyle(activeRole === k)}"
             data-action="setUsRole" data-arg="${k}">${label}</div>`).join('')}
       </div>
       <div class="field-label" style="margin-top:12px">أي فروع تتبع له؟ (اختر أكثر من فرع)</div>
       <div class="flex gap-7 wrap">
-        ${st.branches.map((b) => {
-          const on = branches.includes(b.name);
-          return `
-          <div style="height:40px;display:flex;align-items:center;gap:6px;padding:0 14px;border-radius:11px;font-size:11.5px;font-weight:800;cursor:pointer;${on ? 'background:var(--c-primary);color:#fff' : 'background:var(--c-subtle);color:var(--c-muted);border:1px solid var(--c-card-border)'}"
-            data-action="toggleUsBranch" data-arg="${esc(b.name)}">${esc(b.name)}</div>`;
-        }).join('')}
-      </div>
+        ${st.branches.map((b) => `
+          <div style="height:40px;display:flex;align-items:center;gap:6px;padding:0 14px;border-radius:11px;font-size:11.5px;font-weight:800;cursor:pointer;${pickStyle(branches.includes(b.name), 'var(--c-primary)')}"
+            data-action="toggleUsBranch" data-arg="${esc(b.name)}">${esc(b.name)}</div>`).join('')}
+        ${st.branches.length ? '' : '<div style="font-size:10.5px;color:var(--c-faint)">لا فروع بعد — أضف فرعًا من «الفروع» أولًا.</div>'}
+      </div>`}
       <div class="flex gap-9 mt-14">
         <button class="btn btn-primary grow" data-action="addUser">إنشاء الحساب</button>
         <button class="btn btn-ghost" style="width:110px;font-size:12.5px" data-action="closeAll">إلغاء</button>
@@ -543,37 +561,76 @@ function userNewModal(st) {
     </div>`;
 }
 
-// ---------- تعديل مستخدم ----------
+// ---------- إدارة حساب: الدور والفروع + الدخول (الجوال والرمز المؤقت) ----------
 function userEditModal(st) {
-  const u = st.users.find((x) => x.id === st.modal.id) || {};
-  const roles = st.role === 'ops' ? { worker: 'عامل مطعم' } : { worker: 'عامل مطعم', ops: 'مدير عمليات', fin: 'مدير مالية' };
+  const u = findAccount(st, st.modal.id);
+  if (!u) return `<div style="padding:22px"><div class="flex-center"><div class="modal-title grow">الحساب غير موجود</div>${closeBtn()}</div></div>`;
+  const self = !!st.me && u.id === st.me.id;
+  const staffRole = Object.keys(STAFF_ROLES).includes(u.role);
+  const roles = st.role === 'ops' ? { worker: STAFF_ROLES.worker } : STAFF_ROLES;
+  const brs = accountBranches(st, u);
   const branches = st.ueBranches || [];
+  const state = u.st === 'off' ? chip('موقوف', 'chip-danger') : u.st === 'pend' ? chip('بانتظار التفعيل', 'chip-warn') : chip('فعّال', 'chip-success');
   return `
-    <div style="padding:20px 22px 22px">
+    <div style="padding:20px 22px 22px;overflow-y:auto;min-height:0">
       <div class="flex-center gap-10">
-        <div class="grow">
+        <div class="grow" style="min-width:0">
           <div class="modal-title">إدارة: ${esc(u.name || '')}</div>
-          <div class="num" style="font-size:10.5px;color:var(--c-faint);margin-top:2px" dir="ltr">${esc(u.email || '—')}</div>
+          <div class="flex-center gap-6 wrap" style="margin-top:5px">
+            <span class="num" style="font-size:10.5px;color:var(--c-faint)" dir="ltr">${esc(u.phone || 'بلا جوال')}</span>
+            ${state}${loginChip(u)}
+          </div>
         </div>
         ${closeBtn()}
       </div>
+      ${staffRole ? `
       <div class="field-label">دوره</div>
       <div class="flex gap-7">
         ${Object.entries(roles).map(([k, label]) => `
-          <div style="flex:1;height:42px;display:flex;align-items:center;justify-content:center;border-radius:11px;font-size:11.5px;font-weight:800;cursor:pointer;${(st.ueRole || 'worker') === k ? 'background:var(--c-purple);color:#fff' : 'background:var(--c-subtle);color:var(--c-muted);border:1px solid var(--c-card-border)'}"
+          <div style="flex:1;height:42px;display:flex;align-items:center;justify-content:center;border-radius:11px;font-size:11.5px;font-weight:800;cursor:pointer;${pickStyle((st.ueRole || 'worker') === k)}"
             data-action="setUeRole" data-arg="${k}">${label}</div>`).join('')}
       </div>
       <div class="field-label" style="margin-top:12px">الفروع التابعة له</div>
       <div class="flex gap-7 wrap">
-        ${st.branches.map((b) => {
-          const on = branches.includes(b.name);
-          return `
-          <div style="height:40px;display:flex;align-items:center;padding:0 14px;border-radius:11px;font-size:11.5px;font-weight:800;cursor:pointer;${on ? 'background:var(--c-primary);color:#fff' : 'background:var(--c-subtle);color:var(--c-muted);border:1px solid var(--c-card-border)'}"
-            data-action="toggleUeBranch" data-arg="${esc(b.name)}">${esc(b.name)}</div>`;
-        }).join('')}
+        ${brs.map((b) => `
+          <div style="height:40px;display:flex;align-items:center;padding:0 14px;border-radius:11px;font-size:11.5px;font-weight:800;cursor:pointer;${pickStyle(branches.includes(b.name), 'var(--c-primary)')}"
+            data-action="toggleUeBranch" data-arg="${esc(b.name)}">${esc(b.name)}</div>`).join('')}
       </div>
-      <div class="flex gap-9 mt-16">
-        <button class="btn btn-primary grow" data-action="saveUserEdit">حفظ التغييرات</button>
+      <button class="btn btn-primary btn-block mt-14" data-action="saveUserEdit">حفظ الدور والفروع</button>`
+      : `<div class="banner-info-dashed" style="margin-top:14px;font-size:11px;line-height:1.8">دور هذا الحساب: <b>${esc((ROLES[u.role] || {}).name || u.role)}</b> — يتبع نوع المنشأة ولا يُغيَّر من هنا.</div>`}
+
+      <div style="border-top:1px solid var(--c-divider);margin-top:16px;padding-top:14px">
+        <div style="font-size:12.5px;font-weight:800">الدخول</div>
+        <div class="field-label" style="margin-top:10px">رقم الجوال (به يسجّل الدخول)</div>
+        <div class="flex gap-8">
+          <div class="grow">${phoneField('uePhone', st.uePhone)}</div>
+          <button class="btn btn-soft" style="height:44px;padding:0 14px;border-radius:11px;font-size:11px;color:var(--c-purple);background:var(--c-chip-bg);border:none;white-space:nowrap" data-action="saveUserPhone">حفظ الجوال</button>
+        </div>
+        ${self ? '<div style="font-size:10.5px;color:var(--c-muted);margin-top:10px;line-height:1.8">لتغيير رمزك أنت استخدم «تغيير الرمز السري» من القائمة.</div>' : `
+        <div class="field-label" style="margin-top:12px">رمز مؤقت جديد (نسي رمزه أو قُفل حسابه)</div>
+        ${tempPinRow('uePin', st.uePin)}
+        <button class="btn btn-purple btn-block mt-9 ${(st.uePin || '').length === 4 && u.phone ? '' : 'disabled'}" style="height:44px;border-radius:11px;font-size:12px" data-action="resetUserPin">تعيين الرمز المؤقت وفك القفل</button>
+        <div style="font-size:10px;color:var(--c-faint);margin-top:7px;line-height:1.8">يُخرج الحساب من أجهزته ويُلزمه بتعيين رمز خاص عند دخوله. بلّغه الرمز مباشرة — لا يُعرض مرة أخرى.</div>`}
+      </div>
+      <button class="btn btn-ghost btn-block mt-14" style="font-size:12.5px" data-action="closeAll">إغلاق</button>
+    </div>`;
+}
+
+// ---------- تغيير رمزي السري ----------
+function pinChangeModal(st) {
+  const ready = (st.npOld || '').length === 4 && (st.npNew || '').length === 4 && (st.npNew2 || '').length === 4;
+  return `
+    <div style="padding:20px 22px 22px;overflow-y:auto;min-height:0">
+      <div class="flex-center"><div class="modal-title grow">تغيير الرمز السري</div>${closeBtn()}</div>
+      <div style="font-size:11px;color:var(--c-muted);margin-top:3px;line-height:1.8">رمزك 4 أرقام تدخل به مع رقم جوالك ${st.me && st.me.phone ? `<span class="num" dir="ltr">${esc(st.me.phone)}</span>` : ''}. تغييره يُخرج أي جهاز آخر داخل بحسابك.</div>
+      <div class="field-label" style="margin-top:14px">الرمز الحالي</div>
+      ${pinInput('npOld', st.npOld, { small: true })}
+      <div class="field-label" style="margin-top:12px">الرمز الجديد</div>
+      ${pinInput('npNew', st.npNew, { small: true })}
+      <div class="field-label" style="margin-top:12px">تأكيد الرمز الجديد</div>
+      ${pinInput('npNew2', st.npNew2, { small: true, enter: 'changeMyPin' })}
+      <div class="flex gap-9 mt-14">
+        <button class="btn btn-primary grow ${ready ? '' : 'disabled'}" data-action="changeMyPin">حفظ الرمز الجديد</button>
         <button class="btn btn-ghost" style="width:110px;font-size:12.5px" data-action="closeAll">إلغاء</button>
       </div>
     </div>`;
@@ -595,7 +652,7 @@ function branchDetailModal(st) {
         <div style="width:40px;height:40px;border-radius:12px;background:var(--c-purple-soft);display:flex;align-items:center;justify-content:center">${ICONS.branch('#654e92', 18)}</div>
         <div class="grow">
           <div class="modal-title">${esc(b.name)}</div>
-          <div style="font-size:10.5px;color:var(--c-muted);margin-top:1px">${esc(ROLES[st.role].org)} · ${esc(b.city)}</div>
+          <div style="font-size:10.5px;color:var(--c-muted);margin-top:1px">${esc((st.me || {}).org || '')} · ${esc(b.city)}</div>
         </div>
         ${closeBtn()}
       </div>
@@ -1176,6 +1233,7 @@ const MODALS = {
   reqNew: requestNewModal,
   userNew: userNewModal,
   userEdit: userEditModal,
+  pinChange: pinChangeModal,
 };
 
 export function renderModal(st) {

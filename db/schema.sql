@@ -269,3 +269,113 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE INDEX IF NOT EXISTS idx_wallet_tx_org ON wallet_tx (org_cr, id DESC);
 CREATE INDEX IF NOT EXISTS idx_notifs_role   ON notifs (role, id DESC);
 CREATE INDEX IF NOT EXISTS idx_orders_st     ON orders (st);
+
+-- ============================================================
+-- تكامل B2B OPS (docs/INTEGRATION.md) — جداول خاصة بالمنصة، لا تُشارَك مع أي نظام آخر
+-- ============================================================
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS client_id   bigint;                        -- المنشأة صاحبة الطلب
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS ops_ref     text;                          -- رقم أمر البيع في العمليات SO-…
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS ops_status  text;                          -- حالة التنفيذ كما تبلّغها العمليات
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS ops_eta     text;                          -- موعد التوفر المتوقع للنواقص
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS ops_events  jsonb NOT NULL DEFAULT '[]';   -- [{type,status,text,at}] رحلة التنفيذ
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS ops_sent_at timestamptz;                   -- متى أُرسل للعمليات
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS updated_at  timestamptz NOT NULL DEFAULT now();
+
+CREATE TABLE IF NOT EXISTS integration_outbox (
+  id          text PRIMARY KEY,                -- معرّف الحدث (يُرسل كما هو — مفتاح منع التكرار عند المستقبل)
+  type        text NOT NULL,
+  subject     text NOT NULL,
+  seq         bigint NOT NULL,                 -- تسلسل لكل subject
+  correlation text NOT NULL,
+  data        jsonb NOT NULL,
+  st          text NOT NULL DEFAULT 'pending',  -- pending | sent | failed | dead
+  attempts    int NOT NULL DEFAULT 0,
+  next_at     timestamptz NOT NULL DEFAULT now(),
+  last_error  text,
+  result      jsonb,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  sent_at     timestamptz
+);
+CREATE INDEX IF NOT EXISTS idx_int_outbox_due ON integration_outbox (st, next_at);
+
+CREATE TABLE IF NOT EXISTS integration_inbox (
+  event_id    text PRIMARY KEY,                -- حدث مستلم مرة واحدة فقط
+  type        text NOT NULL,
+  subject     text NOT NULL,
+  seq         bigint,
+  st          text NOT NULL,                   -- applied | stale | rejected
+  error       text,
+  data        jsonb NOT NULL,
+  received_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS integration_subjects (
+  source      text NOT NULL,                   -- sales (تسلسل ما نرسله) | ops (آخر ما طُبّق مما نستلمه)
+  subject     text NOT NULL,
+  last_seq    bigint NOT NULL DEFAULT 0,
+  PRIMARY KEY (source, subject)
+);
+
+CREATE TABLE IF NOT EXISTS ops_stock (
+  pid          text PRIMARY KEY,               -- المتاح للبيع كما يحسبه نظام العمليات (نسخة للعرض فقط)
+  mapped       boolean NOT NULL DEFAULT false,
+  atp          int,
+  incoming     int,
+  incoming_eta text,
+  as_of        timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS integration_hashes (
+  entity  text NOT NULL,                       -- customer | product : بصمة آخر نسخة أُرسلت للعمليات
+  id      text NOT NULL,
+  hash    text NOT NULL,
+  PRIMARY KEY (entity, id)
+);
+
+-- ============================================================
+-- الحسابات والرمز السري وفصل بيانات المنشآت (docs/SECURITY.md) — إضافات فقط
+-- ============================================================
+-- org_users = حسابات الدخول: كل حساب له جوال فريد ورمز سري (PIN) ودور ثابت ومنشأة (NULL = فريق B2B)
+ALTER TABLE org_users ADD COLUMN IF NOT EXISTS client_id bigint;
+ALTER TABLE org_users ADD COLUMN IF NOT EXISTS phone text;
+ALTER TABLE org_users ADD COLUMN IF NOT EXISTS pin_hash text;                          -- salt:hash (scrypt + pepper من البيئة)
+ALTER TABLE org_users ADD COLUMN IF NOT EXISTS must_change_pin boolean NOT NULL DEFAULT true;
+ALTER TABLE org_users ADD COLUMN IF NOT EXISTS last_login_at timestamptz;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_org_users_phone ON org_users (phone) WHERE phone IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_org_users_client ON org_users (client_id);
+
+-- قفل المحاولات: مفتاح = p:<جوال> أو ip:<عنوان>
+CREATE TABLE IF NOT EXISTS login_throttle (
+  key          text PRIMARY KEY,
+  fails        int NOT NULL DEFAULT 0,
+  locks        int NOT NULL DEFAULT 0,         -- عدد مرات القفل المتتالية (يصعّد المدة)
+  window_start timestamptz NOT NULL DEFAULT now(),
+  locked_until timestamptz
+);
+
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS user_id bigint;
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS expires_at timestamptz;
+
+-- المنشأة على كل سجل يخص عميلًا
+ALTER TABLE invoices    ADD COLUMN IF NOT EXISTS client_id bigint;
+ALTER TABLE tickets     ADD COLUMN IF NOT EXISTS client_id bigint;
+ALTER TABLE topup_reqs  ADD COLUMN IF NOT EXISTS client_id bigint;
+ALTER TABLE saved_lists ADD COLUMN IF NOT EXISTS client_id bigint;
+ALTER TABLE notifs      ADD COLUMN IF NOT EXISTS client_id bigint;                     -- NULL = لكل من يحمل الدور
+ALTER TABLE wallet      ADD COLUMN IF NOT EXISTS client_id bigint;
+ALTER TABLE wallet_tx   ADD COLUMN IF NOT EXISTS client_id bigint;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_wallet_client ON wallet (client_id) WHERE client_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_wallet_tx_client ON wallet_tx (client_id, id DESC);
+CREATE INDEX IF NOT EXISTS idx_orders_client ON orders (client_id, created_at DESC);
+
+-- الفروع لكل منشأة (كان الاسم مفتاحًا عامًا لكل المنصة)
+ALTER TABLE branches ADD COLUMN IF NOT EXISTS client_id bigint NOT NULL DEFAULT 1;
+ALTER TABLE branches DROP CONSTRAINT IF EXISTS branches_pkey;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_branches_client_name ON branches (client_id, name);
+
+-- نسخة من فروع/حسابات العميل كما كانت في حقول JSON قبل نقلها إلى جدولي branches و org_users (للرجوع فقط)
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS legacy jsonb;
+
+-- شبكة الفرنشايز: عميل الممنوح نفسه وعميل مانحه
+ALTER TABLE frs ADD COLUMN IF NOT EXISTS client_id bigint;
+ALTER TABLE frs ADD COLUMN IF NOT EXISTS granter_id bigint;

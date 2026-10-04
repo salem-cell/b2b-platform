@@ -3,8 +3,8 @@
 // ============================================================
 import { esc, icon, ICONS } from '../core/dom.js';
 import { chip } from '../ui.js';
-import { ROLES, PAGES, FR_PAGE_LABELS, NOTIF_CHIP, CAN_ORDER } from '../data/constants.js';
-import { BASE_NOTIFS } from '../data/seed.js';
+import { PAGES, FR_PAGE_LABELS, NOTIF_CHIP, CAN_ORDER } from '../data/constants.js';
+import { persona } from '../core/session.js';
 
 /** عنوان الصفحة الحالي حسب الدور */
 export function pageTitle(st) {
@@ -34,7 +34,7 @@ function navBadge(st, key) {
 }
 
 function renderSidebar(st) {
-  const R = ROLES[st.role];
+  const R = persona(st);
   const items = R.nav.map((key) => {
     const page = { ...PAGES[key] };
     if ((st.role === 'fr' || st.role === 'frzs') && FR_PAGE_LABELS[key]) page.label = FR_PAGE_LABELS[key];
@@ -62,7 +62,7 @@ function renderSidebar(st) {
           </div>
         </div>
         <div class="sidebar-actions">
-          <button class="btn btn-soft btn-sm grow" style="font-size:10.5px;color:var(--c-purple);background:var(--c-chip-bg);border:none" data-action="switchUser">تبديل الحساب</button>
+          <button class="btn btn-soft btn-sm grow" style="font-size:10.5px;color:var(--c-purple);background:var(--c-chip-bg);border:none" data-action="openPinChange">تغيير الرمز السري</button>
           <button class="btn btn-danger-outline btn-sm" style="width:66px;font-size:10.5px;border-width:1px" data-action="logout">خروج</button>
         </div>
       </div>
@@ -71,7 +71,7 @@ function renderSidebar(st) {
 
 function renderNotifications(st) {
   if (!st.notifOpen) return '';
-  const notifs = [...((st.extraNotifs || {})[st.role] || []), ...BASE_NOTIFS[st.role]];
+  const notifs = (st.extraNotifs || {})[st.role] || [];
   return `
     <div class="overlay" style="background:transparent;z-index:59" data-action="toggleNotif"></div>
     <div class="notif-pop">
@@ -88,12 +88,13 @@ function renderNotifications(st) {
               <div class="notif-time">${esc(n.t)}</div>
             </div>
           </div>`).join('')}
+        ${notifs.length ? '' : '<div style="padding:22px 16px;text-align:center;font-size:11.5px;color:var(--c-faint)">لا إشعارات بعد.</div>'}
       </div>
     </div>`;
 }
 
 function renderTopbar(st) {
-  const R = ROLES[st.role];
+  const R = persona(st);
   const cartCount = Object.values(st.cart).reduce((s, q) => s + q, 0);
   const showCart = CAN_ORDER.includes(st.role) && st.page === 'catalog';
   return `
@@ -117,11 +118,8 @@ function renderTopbar(st) {
 
 /** بانر إيقاف المنشأة */
 function suspensionBanner(st) {
-  const clientRoles = ['worker', 'ops', 'owner', 'fin'];
-  const superClient = st.clients.find((c) => c.id === 6);
-  const suspended = (clientRoles.includes(st.role) && st.clients[0].st === 'susp')
-    || (st.role === 'frz' && st.clients[1].st === 'susp')
-    || (st.role === 'frzs' && superClient && superClient.st === 'susp');
+  // منشأة الحساب نفسها موقوفة (من هوية الجلسة — لا أرقام عملاء ثابتة)
+  const suspended = !!(st.me && st.me.suspended);
   if (!suspended) return '';
   return `
     <div class="banner banner-danger" style="border-width:1.5px;border-radius:16px;padding:14px 18px;margin-bottom:18px">
