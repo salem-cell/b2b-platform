@@ -106,13 +106,16 @@ export async function upgradeData({ seedPin = process.env.SEED_PIN, adminPhone =
   const base = /^05[0-9]{7}$/.test(String(phoneBase || '')) ? String(phoneBase) : DEFAULT_PHONE_BASE;
   if (phoneBase && base !== phoneBase) out.notes.push('SEED_PHONE_BASE يجب أن يكون 05 متبوعًا بـ 7 أرقام — استُعمل الأساس الافتراضي');
 
+  // SEED_PIN_TEMPORARY=true (البيئة الحية): رمز البداية مؤقت — كل حساب يعيّن رمزه الخاص عند أول دخول
+  const temp = process.env.SEED_PIN_TEMPORARY === 'true';
+
   // حساب إدارة B2B (دخوله يتطلب أيضًا ADMIN_KEY)
   const aPhone = normPhone(adminPhone || `${base}0`);
   if (validPhone(aPhone)) {
     const [admin] = await sql`SELECT id FROM org_users WHERE role = 'b2b' ORDER BY id LIMIT 1`;
     if (!admin) {
       await sql`INSERT INTO org_users (id, name, role, branch, st, client_id, phone, pin_hash, must_change_pin)
-                VALUES (${await nextUserId()}, 'فريق العمليات B2B', 'b2b', 'الإدارة', 'ok', NULL, ${aPhone}, ${hashPin(seedPin)}, false)`;
+                VALUES (${await nextUserId()}, 'فريق العمليات B2B', 'b2b', 'الإدارة', 'ok', NULL, ${aPhone}, ${hashPin(seedPin)}, ${temp})`;
       out.accounts++;
     }
   }
@@ -132,10 +135,10 @@ export async function upgradeData({ seedPin = process.env.SEED_PIN, adminPhone =
       [u] = await sql`SELECT id FROM org_users WHERE client_id = ${cid} AND role = ${d.role} AND phone IS NULL ORDER BY id LIMIT 1`;
     }
     if (u) {
-      await sql`UPDATE org_users SET phone = ${phone}, pin_hash = ${hashPin(seedPin)}, must_change_pin = false, role = ${d.role}, st = 'ok' WHERE id = ${u.id}`;
+      await sql`UPDATE org_users SET phone = ${phone}, pin_hash = ${hashPin(seedPin)}, must_change_pin = ${temp}, role = ${d.role}, st = 'ok' WHERE id = ${u.id}`;
     } else {
       await sql`INSERT INTO org_users (id, name, role, branch, st, client_id, phone, pin_hash, must_change_pin)
-                VALUES (${await nextUserId()}, ${d.name}, ${d.role}, ${d.branch}, 'ok', ${cid}, ${phone}, ${hashPin(seedPin)}, false)`;
+                VALUES (${await nextUserId()}, ${d.name}, ${d.role}, ${d.branch}, 'ok', ${cid}, ${phone}, ${hashPin(seedPin)}, ${temp})`;
     }
     out.accounts++;
   }
