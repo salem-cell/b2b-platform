@@ -373,6 +373,9 @@ ALTER TABLE branches ADD COLUMN IF NOT EXISTS client_id bigint NOT NULL DEFAULT 
 ALTER TABLE branches DROP CONSTRAINT IF EXISTS branches_pkey;
 CREATE UNIQUE INDEX IF NOT EXISTS uq_branches_client_name ON branches (client_id, name);
 
+-- نسخة من فروع/حسابات العميل كما كانت في حقول JSON قبل نقلها إلى جدولي branches و org_users (للرجوع فقط)
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS legacy jsonb;
+
 -- شبكة الفرنشايز: عميل الممنوح نفسه وعميل مانحه
 ALTER TABLE frs ADD COLUMN IF NOT EXISTS client_id bigint;
 ALTER TABLE frs ADD COLUMN IF NOT EXISTS granter_id bigint;

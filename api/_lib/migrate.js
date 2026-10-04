@@ -75,7 +75,7 @@ export async function runMigration({ schema, reset = false, seedPin, adminPhone 
 
   // ترقية البيانات: تعمل على القاعدة الجديدة والقائمة معًا
   const up = await upgradeData({ seedPin, adminPhone });
-  return { ok: true, seeded, accounts: up.accounts, notes: up.notes };
+  return { ok: true, seeded, accounts: up.accounts, notes: up.notes, summary: up.summary };
 }
 
 /** بيانات العينة لقاعدة فارغة (بصيغتها الأصلية — upgrade.js يربطها بمنشآتها بعد ذلك) */

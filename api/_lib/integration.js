@@ -23,6 +23,9 @@ export function config() {
     prevKeyId: process.env.OPS_KEY_ID_PREV || '',
     prevSecret: process.env.OPS_KEY_SECRET_PREV || '',
     since: process.env.OPS_INTEGRATION_SINCE || '', // لا يُرسل للعمليات طلب أقدم من هذا التاريخ عند الإصلاح
+    // مرحلة التهيئة: OPS_INTEGRATION_ORDERS=false يُبقي مزامنة العملاء/الأصناف والمتاح للبيع ويؤجل تحويل الطلبات
+    // للعمليات (يبقى تنفيذها يدويًا في المنصة) إلى أن تُربط الأصناف ويُدخل المخزون هناك
+    orders: process.env.OPS_INTEGRATION_ORDERS !== 'false',
   };
 }
 
@@ -160,7 +163,7 @@ export async function customerPayload(clientId) {
 
 /** الطلب المعتمد تجاريًا → أمر تنفيذ في العمليات (بأسعار لحظة الطلب) */
 export async function emitOrderConfirmed(order, role) {
-  if (!enabled()) return null;
+  if (!enabled() || !config().orders) return null;
   // طلب بلا منشأة (مثل طلب واتساب من رقم غير مسجّل) لا يُرسل آليًا — يعالجه فريق B2B يدويًا
   if (order.client_id == null) return null;
   const clientId = String(order.client_id);
@@ -290,7 +293,7 @@ export async function runCycle() {
   // طلب معتمد تجاريًا (b2b) لم يُسجَّل له حدث — مثلًا انقطع التنفيذ بين التحديث والتسجيل: يُرسل الآن
   const since = c.since || '1970-01-01';
   const missed = await sql`SELECT * FROM orders WHERE st = 'b2b' AND ops_sent_at IS NULL AND client_id IS NOT NULL AND created_at >= ${since}::timestamptz ORDER BY created_at LIMIT 50`;
-  for (const o of missed) await emitOrderConfirmed(o, 'repair');
+  if (c.orders) for (const o of missed) await emitOrderConfirmed(o, 'repair');
   const master = await syncMasterData();
   const delivered = await flush({ limit: 100, budgetMs: 20000 });
   const stock = await refreshStock();

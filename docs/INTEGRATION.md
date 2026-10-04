@@ -41,8 +41,18 @@
 
 ## متغيرات البيئة (Vercel)
 
-`OPS_INTEGRATION_ENABLED` · `OPS_API_URL` · `OPS_KEY_ID` · `OPS_KEY_SECRET` · `OPS_INTEGRATION_SINCE`
+`OPS_INTEGRATION_ENABLED` · `OPS_API_URL` · `OPS_KEY_ID` · `OPS_KEY_SECRET` · `OPS_INTEGRATION_SINCE` · `OPS_INTEGRATION_ORDERS`
 (وأثناء تدوير المفتاح: `OPS_KEY_ID_PREV` · `OPS_KEY_SECRET_PREV`).
+
+### التفعيل على مرحلتين
+
+| المرحلة | الضبط | ما يعمل |
+|---|---|---|
+| 1 — التهيئة | `OPS_INTEGRATION_ENABLED=true` و`OPS_INTEGRATION_ORDERS=false` | العملاء والأصناف تُرسل للعمليات، والمتاح للبيع يظهر في الكتالوج. **الطلبات تبقى تُنفَّذ يدويًا في المنصة كما هي.** |
+| 2 — التشغيل | `OPS_INTEGRATION_ORDERS=true` (أو حذفه) + `OPS_INTEGRATION_SINCE=<تاريخ التحويل>` | كل طلب يُعمَّد بعد التاريخ يذهب للعمليات للحجز والتنفيذ، وتُعطَّل أزرار التنفيذ اليدوي له |
+
+الانتقال للمرحلة 2 بعد أن تُربط أصناف المنصة بأصناف العمليات (برج التكامل ← الربط) ويكون مخزونها مُدخلًا هناك؛
+وإلا يبقى الطلب «بانتظار ربط صنف» في العمليات حتى يُربط (لا يضيع، لكنه لا يُنفَّذ).
 
 ## قبل التفعيل على الموقع الحي
 
