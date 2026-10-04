@@ -306,7 +306,8 @@ export async function refreshStock() {
   let updated = 0;
   for (let i = 0; i < pids.length; i += 100) {
     const chunk = pids.slice(i, i + 100);
-    const r = await opsFetch('GET', `/api/v1/inventory/availability?products=${chunk.map(encodeURIComponent).join(',')}`);
+    // الفاصلة تُرسل مُرمَّزة (%2C): بعض المنصات (Vercel) تعيد ترميز الفاصلة الخام في المسار فيختلف المسار الموقَّع عمّا يصل
+    const r = await opsFetch('GET', `/api/v1/inventory/availability?products=${encodeURIComponent(chunk.join(','))}`);
     if (r.status !== 200) return { updated, error: `HTTP ${r.status}` };
     for (const it of r.body.items || []) {
       await sql`INSERT INTO ops_stock (pid, mapped, atp, incoming, incoming_eta, as_of) VALUES (${it.productId}, ${!!it.mapped}, ${it.atp ?? null}, ${it.incoming ?? null}, ${it.incomingEta ?? null}, now())
