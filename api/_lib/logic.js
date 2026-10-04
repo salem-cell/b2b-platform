@@ -1,11 +1,71 @@
 // ============================================================
 // منطق الأعمال على الخادم — المصدر الوحيد للحقيقة
-// كل أمر: تحقق صلاحية → تعديل القاعدة → إشعارات → رسالة
+// كل أمر: تحقق صلاحية الدور + ملكية السجل (منشأة الحساب) → تعديل القاعدة → إشعارات → رسالة
+// ctx = سياق الجلسة من سجل الحساب: { role, userId, clientId, name, branch, org, frsId } — docs/SECURITY.md
 // ============================================================
-import { sql, nextSeq, nowLabel, notify, fmt, fmt0, VAT, SAMPLE_CR } from './db.js';
+import { sql, nextSeq, nowLabel, notify, fmt, fmt0, VAT } from './db.js';
 import { httpError } from './http.js';
-import { ROLES, SUPER_FR_ID } from '../../js/data/constants.js';
+import { ROLES } from '../../js/data/constants.js';
 import { emit, emitOrderConfirmed, sentToOps, enabled as integrationOn } from './integration.js';
+import { assertPin, hashPin, normPhone, validPhone } from './auth.js';
+
+const APPROVER_FINAL = ['owner', 'frz', 'frzs'];
+const isB2B = (ctx) => ctx.role === 'b2b';
+const NOT_FOUND = { order: 'الطلب غير موجود', client: 'العميل غير موجود' };
+
+async function productMap() {
+  const rows = await sql`SELECT id, name, unit, price::float, is_out FROM products`;
+  return Object.fromEntries(rows.map((p) => [p.id, p]));
+}
+
+/** منشأة الحساب — أوامر العملاء لا تعمل لحساب بلا منشأة (فريق B2B) */
+function myClient(ctx) {
+  if (ctx.clientId == null) throw httpError(403, 'هذا الإجراء لحسابات المنشآت');
+  return ctx.clientId;
+}
+
+/** هل العميل ضمن شبكة الجلسة: المانح يرى ممنوحيه، والسوبر يرى تابعيه */
+async function inNetwork(ctx, clientId) {
+  if (ctx.clientId == null) return false;
+  if (ctx.role === 'fr') {
+    const [f] = await sql`SELECT 1 AS ok FROM frs WHERE client_id = ${clientId} AND granter_id = ${ctx.clientId}`;
+    return !!f;
+  }
+  if (ctx.role === 'frzs' && ctx.frsId != null) {
+    const [f] = await sql`SELECT 1 AS ok FROM frs WHERE client_id = ${clientId} AND parent = ${ctx.frsId}`;
+    return !!f;
+  }
+  return false;
+}
+
+/** يرفض (كأنه غير موجود) أي عميل خارج نطاق الجلسة: منشأتي، أو شبكتي عند network، أو الكل لـ B2B */
+async function assertClientAccess(ctx, clientId, { network = false } = {}) {
+  const cid = Number(clientId);
+  if (isB2B(ctx) || (ctx.clientId != null && cid === ctx.clientId)) return cid;
+  if (network && await inNetwork(ctx, cid)) return cid;
+  throw httpError(404, NOT_FOUND.client);
+}
+
+async function getOrder(ctx, id) {
+  const [o] = await sql`SELECT * FROM orders WHERE id = ${id}`;
+  if (!o || (!isB2B(ctx) && Number(o.client_id) !== ctx.clientId)) throw httpError(404, NOT_FOUND.order);
+  return o;
+}
+
+/** قيد بسجل إجراءات الطلب — باسم الحساب الفعلي */
+function logEntry(ctx, txt) {
+  return { who: ctx.name, role: ROLES[ctx.role].name, txt, t: nowLabel() };
+}
+
+/** وصف نصي لتغييرات الكميات (يدخل في سجل الإجراءات) */
+function qtyDiffTxt(items, qty, pm) {
+  const parts = [];
+  for (const i of items) {
+    const nq = Math.max(0, Math.floor(Number(qty?.[i.pid] ?? i.qty)));
+    if (nq !== i.qty) parts.push(nq === 0 ? `حذف ${pm[i.pid]?.name || i.pid}` : `${pm[i.pid]?.name || i.pid} من ${i.qty} إلى ${nq}`);
+  }
+  return parts.length ? `عدّل الكميات: ${parts.join('، ')}` : '';
+}
 
 /** طلب أُرسل لنظام العمليات: التنفيذ (تعديل الكميات/التعليق/الإرسال للتوصيل) يُدار هناك */
 function opsOwned(o) {
@@ -18,54 +78,67 @@ async function pricesFor(clientId) {
   return Object.fromEntries(own.map((r) => [r.pid, r.price]));
 }
 
-async function productMap() {
-  const rows = await sql`SELECT id, name, unit, price::float, is_out FROM products`;
-  return Object.fromEntries(rows.map((p) => [p.id, p]));
+async function clientRow(clientId) {
+  const [c] = await sql`SELECT * FROM clients WHERE id = ${clientId}`;
+  if (!c) throw httpError(404, NOT_FOUND.client);
+  return c;
 }
 
-async function getOrder(id) {
-  const [o] = await sql`SELECT * FROM orders WHERE id = ${id}`;
-  if (!o) throw httpError(404, 'الطلب غير موجود');
-  return o;
+async function clientNameOf(cid) {
+  const [c] = await sql`SELECT name FROM clients WHERE id = ${cid}`;
+  return c ? c.name : `عميل ${cid}`;
 }
 
-const CLIENT_ROLES = ['worker', 'ops', 'owner', 'fin', 'frz', 'frzs'];
-const APPROVER_FINAL = ['owner', 'frz', 'frzs'];
+// ============ المحفظة: واحدة لكل منشأة ============
 
-function sessionClientId(role) {
-  return role === 'frz' ? 2 : role === 'frzs' ? 6 : 1;
-}
-
-/** قيد بسجل إجراءات الطلب */
-function logEntry(role, txt) {
-  return { who: ROLES[role].user, role: ROLES[role].name, txt, t: nowLabel() };
-}
-
-/** وصف نصي لتغييرات الكميات (يدخل في سجل الإجراءات) */
-function qtyDiffTxt(items, qty, pm) {
-  const parts = [];
-  for (const i of items) {
-    const nq = Math.max(0, Math.floor(Number(qty?.[i.pid] ?? i.qty)));
-    if (nq !== i.qty) parts.push(nq === 0 ? `حذف ${pm[i.pid].name}` : `${pm[i.pid].name} من ${i.qty} إلى ${nq}`);
+/** محفظة المنشأة (تُنشأ عند أول استخدام من أرصدة سجل العميل) */
+async function walletOf(clientId) {
+  let [w] = await sql`SELECT * FROM wallet WHERE client_id = ${clientId}`;
+  if (!w) {
+    const c = await clientRow(clientId);
+    await sql`INSERT INTO wallet (org_cr, bal, cr_limit, used, client_id)
+              VALUES (${`c:${clientId}`}, ${Number(c.bal)}, ${Number(c.cr_limit)}, ${Number(c.used)}, ${clientId})
+              ON CONFLICT DO NOTHING`;
+    [w] = await sql`SELECT * FROM wallet WHERE client_id = ${clientId}`;
   }
-  return parts.length ? `عدّل الكميات: ${parts.join('، ')}` : '';
+  return w;
+}
+
+/** حركة على المحفظة (موجب = إضافة) مع قيدها في الكشف — وتبقى أرصدة سجل العميل مطابقة */
+async function walletMove(clientId, amount, label) {
+  await walletOf(clientId);
+  await sql`UPDATE wallet SET bal = bal + ${amount} WHERE client_id = ${clientId}`;
+  await sql`UPDATE clients SET bal = bal + ${amount} WHERE id = ${clientId}`;
+  await sql`INSERT INTO wallet_tx (org_cr, t, d, amt, client_id) VALUES (${`c:${clientId}`}, ${label}, 'الآن', ${amount}, ${clientId})`;
+}
+
+async function assertWalletActive(clientId) {
+  const c = await clientRow(clientId);
+  if (c.wst === 'frozen') throw httpError(403, 'محفظة المنشأة مجمّدة — لا شحن ولا صرف حتى فك التجميد من B2B');
 }
 
 // ============ الطلبات ============
 
-async function ordersSubmit(role, { items }) {
+async function ordersSubmit(ctx, { items }) {
+  const { role } = ctx;
   if (!['worker', 'ops', 'owner', 'frz', 'frzs'].includes(role)) throw httpError(403, 'هذا الدور لا يستطيع إنشاء طلبات');
   if (!Array.isArray(items) || !items.length) throw httpError(400, 'السلة فارغة');
-  const [client] = await sql`SELECT st FROM clients WHERE id = ${sessionClientId(role)}`;
-  if (client && client.st === 'susp') throw httpError(403, 'حساب منشأتك موقوف — لا يمكن إرسال طلبات');
+  const clientId = myClient(ctx);
+  const client = await clientRow(clientId);
+  if (client.st === 'susp') throw httpError(403, 'حساب منشأتك موقوف — لا يمكن إرسال طلبات');
 
   const pm = await productMap();
-  const clientId = sessionClientId(role);
   const own = await pricesFor(clientId);
   const clean = items
     .filter((i) => pm[i.pid] && !pm[i.pid].is_out && Number(i.qty) > 0)
     .map((i) => ({ pid: i.pid, qty: Math.min(999, Math.floor(Number(i.qty))), price: own[i.pid] ?? pm[i.pid].price }));
   if (!clean.length) throw httpError(400, 'لا أصناف صالحة في السلة');
+
+  // فرع الطلب: فرع الحساب (الأول إن تعددت)؛ حسابات الإدارة تطلب للفرع الأول للمنشأة
+  let branch = String(ctx.branch || '').split(' · ')[0].trim();
+  const myBranches = await sql`SELECT name, st FROM branches WHERE client_id = ${clientId} ORDER BY name`;
+  if (!myBranches.some((b) => b.name === branch)) branch = myBranches.find((b) => b.st !== 'off')?.name || branch || 'الإدارة';
+  if (myBranches.some((b) => b.name === branch && b.st === 'off')) throw httpError(403, `${branch} موقوف مؤقتًا — لا تُقبل طلبات منه`);
 
   // مسار الطلب حسب الدور: المالك/الممنوحون → مباشرة إلى B2B؛ مدير العمليات → تعميد المشتريات؛ العامل → المسار الكامل
   const direct = ['owner', 'frz', 'frzs'].includes(role);
@@ -75,36 +148,40 @@ async function ordersSubmit(role, { items }) {
 
   const seq = await nextSeq('order');
   const id = `ORD-${seq}`;
-  const log = [logEntry(role, `أنشأ الطلب (${clean.length} أصناف) وأرسله${direct ? ' مباشرة إلى B2B' : role === 'ops' ? ' لتعميد المشتريات' : ' لتعميد العمليات'}`)];
-  await sql`INSERT INTO orders (id, by_user, branch, date_label, st, items, stamps, log)
-            VALUES (${id}, ${ROLES[role].user}, ${'فرع العليا'}, 'الآن', ${startSt},
-                    ${JSON.stringify(clean)}, ${JSON.stringify(stamps)}, ${JSON.stringify(log)})`;
-  // أعمدة التكامل تُكتب فقط عند تفعيله (بعد ترحيل المخطط) — والمنصة تعمل على المخطط السابق ما دام مطفأ
-  if (integrationOn()) {
-    await sql`UPDATE orders SET client_id = ${clientId} WHERE id = ${id}`;
-    // طلب معتمد مباشرة (المالك/الممنوح) → يذهب لنظام العمليات للتنفيذ
-    if (direct) await emitOrderConfirmed(await getOrder(id), role);
-  }
+  const log = [logEntry(ctx, `أنشأ الطلب (${clean.length} أصناف) وأرسله${direct ? ' مباشرة إلى B2B' : role === 'ops' ? ' لتعميد المشتريات' : ' لتعميد العمليات'}`)];
+  await sql`INSERT INTO orders (id, by_user, branch, date_label, st, items, stamps, log, client_id)
+            VALUES (${id}, ${ctx.name}, ${branch}, 'الآن', ${startSt},
+                    ${JSON.stringify(clean)}, ${JSON.stringify(stamps)}, ${JSON.stringify(log)}, ${clientId})`;
+  // طلب معتمد مباشرة (المالك/الممنوح) → يذهب لنظام العمليات للتنفيذ
+  if (direct) await emitOrderConfirmed(await getOrder(ctx, id), role);
 
-  const notifTo = direct ? ['ops', 'fin'] : role === 'ops' ? ['owner'] : ['ops'];
-  const notifTxt = direct
-    ? `أرسل ${ROLES[role].user} الطلب ${id} مباشرة إلى B2B`
-    : role === 'ops' ? `طلب جديد بانتظار تعميدك النهائي — ${id}` : `طلب جديد بانتظار تعميدك — ${id}`;
-  await notify(notifTo, 'اعتمادات', notifTxt);
+  if (direct) {
+    await notify(['ops', 'fin'], 'اعتمادات', `أرسل ${ctx.name} الطلب ${id} مباشرة إلى B2B`, clientId);
+    await notify(['b2b'], 'اعتمادات', `طلب جديد ${id} من ${client.name} — ${branch}`);
+  } else {
+    await notify(role === 'ops' ? ['owner', 'frz', 'frzs'] : ['ops'], 'اعتمادات',
+      role === 'ops' ? `طلب جديد بانتظار تعميدك النهائي — ${id}` : `طلب جديد بانتظار تعميدك — ${id}`, clientId);
+  }
 
   return direct
     ? `أُرسل الطلب ${id} مباشرة إلى B2B — لا يحتاج تعميدًا`
     : role === 'ops' ? `أُرسل الطلب ${id} لتعميد مدير المشتريات مباشرة` : `أُرسل الطلب ${id} لتعميد مدير العمليات`;
 }
 
-async function ordersApprove(role, { id, qty }) {
-  const o = await getOrder(id);
+async function ordersApprove(ctx, { id, qty }) {
+  const { role } = ctx;
+  const o = await getOrder(ctx, id);
+  const cid = Number(o.client_id) || null;
   const canFirst = role === 'ops' || role === 'b2b';
   const canFinal = APPROVER_FINAL.includes(role) || role === 'b2b';
   if (o.st === 'ops' && !canFirst) throw httpError(403, 'تعميد هذه المرحلة لمدير العمليات');
   if (o.st === 'purch' && !canFinal) throw httpError(403, 'التعميد النهائي للمالك / المشتريات');
   if (!['ops', 'purch', 'b2b', 'hold'].includes(o.st)) throw httpError(400, 'الطلب ليس في مرحلة تعميد');
-  if (o.st === 'b2b' || o.st === 'hold') opsOwned(o);
+  if (o.st === 'b2b' || o.st === 'hold') {
+    // بعد وصول الطلب إلى B2B: التعديل لفريق B2B فقط (وإن كان في نظام العمليات فمن هناك)
+    if (!isB2B(ctx)) throw httpError(403, 'الطلب لدى B2B — لا يُعدَّل من المنشأة بعد التعميد النهائي');
+    opsOwned(o);
+  }
   const pm = await productMap();
 
   // الأصناف المحذوفة تبقى بكمية صفر — تظهر للجميع ويمكن لأي معمِّد لاحق إرجاعها
@@ -118,25 +195,25 @@ async function ordersApprove(role, { id, qty }) {
   const dtx = qtyDiffTxt(o.items, qty, pm);
 
   // B2B ينقص كميات طلب قيد التجهيز → إصدار جزئي + طلب نواقص تابع تلقائيًا
-  if ((o.st === 'b2b' || o.st === 'hold') && role === 'b2b' && changed) {
+  if ((o.st === 'b2b' || o.st === 'hold') && changed) {
     const shortage = o.items
-      .map((i) => ({ pid: i.pid, qty: i.qty - Math.max(0, Math.floor(Number(qty?.[i.pid] ?? i.qty))) }))
+      .map((i) => ({ ...i, qty: i.qty - Math.max(0, Math.floor(Number(qty?.[i.pid] ?? i.qty))) }))
       .filter((i) => i.qty > 0);
     if (shortage.length && !liveCount) throw httpError(400, 'كل الكميات صفر — علّق الطلب أو ارفضه بدل الإصدار الجزئي');
     if (shortage.length) {
       const childId = `${o.id}-B`;
       const stamps = [...o.stamps];
       stamps[4] = nowLabel();
-      const parentLog = [...o.log, logEntry(role, `${dtx ? `${dtx} — ` : ''}أصدر المتوفر للتوصيل وأنشأ طلب النواقص التابع ${childId}`)];
+      const parentLog = [...o.log, logEntry(ctx, `${dtx ? `${dtx} — ` : ''}أصدر المتوفر للتوصيل وأنشأ طلب النواقص التابع ${childId}`)];
       await sql`UPDATE orders SET st = 'ship', items = ${JSON.stringify(items)},
                 stamps = ${JSON.stringify(stamps)}, log = ${JSON.stringify(parentLog)} WHERE id = ${o.id}`;
-      await sql`INSERT INTO orders (id, by_user, branch, date_label, st, items, stamps, log, backorder, parent_ref, hold_reason)
+      await sql`INSERT INTO orders (id, by_user, branch, date_label, st, items, stamps, log, backorder, parent_ref, hold_reason, client_id)
                 VALUES (${childId}, ${o.by_user}, ${o.branch}, ${`اليوم ${nowLabel()}`}, 'hold',
                         ${JSON.stringify(shortage)}, ${JSON.stringify(o.stamps)},
-                        ${JSON.stringify([logEntry(role, `أُنشئ تلقائيًا كطلب نواقص تابع لـ ${o.id}`)])},
-                        true, ${o.id}, 'بانتظار توفر الأصناف الناقصة — فور التوفر يُرسل للتوصيل بفاتورة مستقلة')`;
+                        ${JSON.stringify([logEntry(ctx, `أُنشئ تلقائيًا كطلب نواقص تابع لـ ${o.id}`)])},
+                        true, ${o.id}, 'بانتظار توفر الأصناف الناقصة — فور التوفر يُرسل للتوصيل بفاتورة مستقلة', ${cid})`;
       await notify(['worker', 'ops', 'owner', 'frz', 'frzs', 'fin'], 'طلبات',
-        `أصدر B2B المتوفر من ${o.id} للتوصيل، وأُنشئ طلب نواقص تابع ${childId} يُرسل فور التوفر`);
+        `أصدر B2B المتوفر من ${o.id} للتوصيل، وأُنشئ طلب نواقص تابع ${childId} يُرسل فور التوفر`, cid);
       return `أُرسل المتوفر من ${o.id} للتوصيل وأُنشئ طلب النواقص التابع ${childId}`;
     }
   }
@@ -149,14 +226,18 @@ async function ordersApprove(role, { id, qty }) {
   else if (o.st === 'purch') { st = 'b2b'; stamps[2] = nowLabel(); stamps[3] = nowLabel(); }
   const actTxt = o.st === 'ops' ? 'عمّد الطلب وأرسله لتعميد المشتريات'
     : o.st === 'purch' ? 'عمّد الطلب نهائيًا وأرسله إلى B2B' : 'عدّل الطلب أثناء التجهيز';
-  const log = [...o.log, logEntry(role, dtx ? `${dtx} ثم ${actTxt}` : actTxt)];
+  const log = [...o.log, logEntry(ctx, dtx ? `${dtx} ثم ${actTxt}` : actTxt)];
   await sql`UPDATE orders SET st = ${st}, items = ${JSON.stringify(items)},
-            stamps = ${JSON.stringify(stamps)}, log = ${JSON.stringify(log)} WHERE id = ${id}`;
+            stamps = ${JSON.stringify(stamps)}, log = ${JSON.stringify(log)}, updated_at = now() WHERE id = ${id}`;
   // التعميد النهائي → يذهب لنظام العمليات للتنفيذ
-  if (o.st === 'purch' && st === 'b2b') await emitOrderConfirmed(await getOrder(id), role);
+  if (o.st === 'purch' && st === 'b2b') {
+    await emitOrderConfirmed(await getOrder(ctx, id), role);
+    await notify(['b2b'], 'اعتمادات', `طلب معتمد ${id} من ${await clientNameOf(cid)} — ${o.branch}`);
+  }
+  if (o.st === 'ops') await notify(['owner', 'frz', 'frzs'], 'اعتمادات', `طلب بانتظار تعميدك النهائي — ${id}`, cid);
 
-  if ((o.st === 'b2b' || o.st === 'hold') && role === 'b2b' && changed) {
-    await notify(['worker', 'ops', 'owner', 'frz', 'frzs'], 'طلبات', `عدّل B2B كميات الطلب ${id} — يستمر التجهيز دون إعادة تعميد`);
+  if ((o.st === 'b2b' || o.st === 'hold') && changed) {
+    await notify(['worker', 'ops', 'owner', 'frz', 'frzs'], 'طلبات', `عدّل B2B كميات الطلب ${id} — يستمر التجهيز دون إعادة تعميد`, cid);
   }
   return o.st === 'ops'
     ? (changed ? `عُدّلت الكميات وعُمّد ${id} — أُشعر مقدّم الطلب ومدير المشتريات` : `عُمّد ${id} وأُرسل لمدير المشتريات`)
@@ -165,73 +246,78 @@ async function ordersApprove(role, { id, qty }) {
       : (changed ? `عُدّل ${id} وأُشعر العميل` : `لا تغيير على ${id}`);
 }
 
-async function ordersReject(role, { id, reason }) {
+async function ordersReject(ctx, { id, reason }) {
+  const { role } = ctx;
   if (!['ops', 'owner', 'frz', 'frzs', 'b2b'].includes(role)) throw httpError(403, 'لا صلاحية للرفض');
   const text = (reason || '').trim();
   if (text.length < 5) throw httpError(400, 'سبب الرفض إلزامي (5 أحرف على الأقل) ويصل نصًا لمقدّم الطلب');
-  const o = await getOrder(id);
-  const rejAt = o.st === 'ops' ? 1 : o.st === 'purch' ? 2 : 4;
-  const log = [...o.log, logEntry(role, `رفض الطلب — ${text}`)];
+  const o = await getOrder(ctx, id);
   if (['ship', 'done', 'short', 'rej'].includes(o.st)) throw httpError(400, 'لا يمكن رفض طلب خرج للتوصيل أو انتهى');
-  await sql`UPDATE orders SET st = 'rej', reason = ${text}, rej_at = ${rejAt}, log = ${JSON.stringify(log)} WHERE id = ${id}`;
+  if (role === 'ops' && o.st !== 'ops') throw httpError(403, 'رفض مدير العمليات لطلبات مرحلته فقط');
+  const rejAt = o.st === 'ops' ? 1 : o.st === 'purch' ? 2 : 4;
+  const log = [...o.log, logEntry(ctx, `رفض الطلب — ${text}`)];
+  await sql`UPDATE orders SET st = 'rej', reason = ${text}, rej_at = ${rejAt}, log = ${JSON.stringify(log)}, updated_at = now() WHERE id = ${id}`;
   // طلب في يد العمليات: يُطلب الإلغاء هناك (يُفرج الحجز قبل التجهيز، وبعده يلزم قرار ويُبلَّغ الرد)
   if (sentToOps(o)) await emit('sales_order.cancelled', id, { id, reason: text });
-  await notify(['worker', 'ops'], 'اعتمادات', `رُفض ${id} — ${text}`);
+  await notify(['worker', 'ops'], 'اعتمادات', `رُفض ${id} — ${text}`, Number(o.client_id) || null);
   return `رُفض ${id} وأُرسل السبب لمقدّم الطلب`;
 }
 
-async function ordersHold(role, { id, reason }) {
-  if (role !== 'b2b') throw httpError(403, 'تعليق الطلبات صلاحية B2B');
+async function ordersHold(ctx, { id, reason }) {
+  if (!isB2B(ctx)) throw httpError(403, 'تعليق الطلبات صلاحية B2B');
   const text = (reason || '').trim();
   if (text.length < 5) throw httpError(400, 'سبب التعليق إلزامي — يظهر للعميل نصًا');
-  const o = await getOrder(id);
+  const o = await getOrder(ctx, id);
+  if (o.st !== 'b2b') throw httpError(400, 'يُعلَّق الطلب وهو قيد التجهيز لدى B2B فقط');
   opsOwned(o);
-  const log = [...o.log, logEntry(role, `علّق الطلب — ${text}`)];
+  const log = [...o.log, logEntry(ctx, `علّق الطلب — ${text}`)];
   await sql`UPDATE orders SET st = 'hold', hold_reason = ${text}, log = ${JSON.stringify(log)} WHERE id = ${id}`;
-  await notify(['worker', 'ops', 'owner', 'frz'], 'طلبات', `علّق B2B الطلب ${id} — ${text}`);
+  await notify(['worker', 'ops', 'owner', 'frz', 'frzs'], 'طلبات', `علّق B2B الطلب ${id} — ${text}`, Number(o.client_id) || null);
   return `عُلّق ${id} — يظهر السبب للعميل ويمكن الاستئناف`;
 }
 
-async function ordersResume(role, { id }) {
-  if (role !== 'b2b') throw httpError(403, 'استئناف الطلبات صلاحية B2B');
-  const o = await getOrder(id);
+async function ordersResume(ctx, { id }) {
+  if (!isB2B(ctx)) throw httpError(403, 'استئناف الطلبات صلاحية B2B');
+  const o = await getOrder(ctx, id);
   opsOwned(o);
-  const log = [...o.log, logEntry(role, 'استأنف تجهيز الطلب')];
+  const log = [...o.log, logEntry(ctx, 'استأنف تجهيز الطلب')];
   await sql`UPDATE orders SET st = 'b2b', hold_reason = NULL, log = ${JSON.stringify(log)} WHERE id = ${id} AND st = 'hold'`;
   return `استؤنف تجهيز ${id}`;
 }
 
-async function ordersAdvance(role, { id }) {
-  if (role !== 'b2b') throw httpError(403, 'الإرسال للتوصيل صلاحية B2B');
-  const o = await getOrder(id);
+async function ordersAdvance(ctx, { id }) {
+  if (!isB2B(ctx)) throw httpError(403, 'الإرسال للتوصيل صلاحية B2B');
+  const o = await getOrder(ctx, id);
+  const cid = Number(o.client_id) || null;
   // طلب النواقص التابع يُرسل من حالة التعليق فور توفر أصنافه، وتصدر له فاتورة مستقلة
   if (!(o.st === 'b2b' || (o.backorder && o.st === 'hold'))) throw httpError(400, 'الطلب ليس قيد التجهيز');
   opsOwned(o);
   const stamps = [...o.stamps];
   stamps[4] = nowLabel();
-  const log = [...o.log, logEntry(role, o.backorder ? 'اعتمد توفر الأصناف وأرسل الطلب للتوصيل بفاتورة مستقلة' : 'أرسل الطلب للتوصيل')];
+  const log = [...o.log, logEntry(ctx, o.backorder ? 'اعتمد توفر الأصناف وأرسل الطلب للتوصيل بفاتورة مستقلة' : 'أرسل الطلب للتوصيل')];
   await sql`UPDATE orders SET st = 'ship', hold_reason = NULL, stamps = ${JSON.stringify(stamps)}, log = ${JSON.stringify(log)} WHERE id = ${id}`;
 
   let invMsg = '';
   if (o.backorder) {
     const pm = await productMap();
-    const total = o.items.reduce((s, i) => s + pm[i.pid].price * i.qty, 0) * (1 + VAT);
+    const total = o.items.reduce((s, i) => s + (i.price ?? pm[i.pid]?.price ?? 0) * i.qty, 0) * (1 + VAT);
     const [{ count }] = await sql`SELECT count(*)::int AS count FROM invoices`;
     const invId = `INV-${9330 + count}`;
-    await sql`INSERT INTO invoices (id, ref, due, amt, rem, st)
-              VALUES (${invId}, ${`${id} — نواقص ${o.parent_ref || ''}`}, 'الاستحقاق 10 أغسطس', ${total}, ${total}, 'unpaid')`;
+    await sql`INSERT INTO invoices (id, ref, due, amt, rem, st, client_id)
+              VALUES (${invId}, ${`${id} — نواقص ${o.parent_ref || ''}`}, 'الاستحقاق 10 أغسطس', ${total}, ${total}, 'unpaid', ${cid})`;
     invMsg = ` وصدرت فاتورته المستقلة ${invId}`;
     await notify(['worker', 'ops', 'owner', 'frz', 'frzs', 'fin'], 'طلبات',
-      `توفرت نواقص ${o.parent_ref || ''} — خرج ${id} للتوصيل وصدرت فاتورته ${invId}`);
+      `توفرت نواقص ${o.parent_ref || ''} — خرج ${id} للتوصيل وصدرت فاتورته ${invId}`, cid);
   } else {
-    await notify(['worker'], 'طلبات', `خرج طلبك ${id} للتوصيل — أكّد الاستلام عند وصوله`);
+    await notify(['worker'], 'طلبات', `خرج طلبك ${id} للتوصيل — أكّد الاستلام عند وصوله`, cid);
   }
   return `أُرسل ${id} للتوصيل${invMsg}`;
 }
 
-async function ordersReceive(role, { id, recv }) {
-  if (role !== 'worker') throw httpError(403, 'تأكيد الاستلام لعامل المطعم');
-  const o = await getOrder(id);
+async function ordersReceive(ctx, { id, recv }) {
+  if (ctx.role !== 'worker') throw httpError(403, 'تأكيد الاستلام لعامل المطعم');
+  const o = await getOrder(ctx, id);
+  const cid = Number(o.client_id) || null;
   if (o.st !== 'ship') throw httpError(400, 'الطلب ليس قيد التوصيل');
   const pm = await productMap();
 
@@ -244,7 +330,7 @@ async function ordersReceive(role, { id, recv }) {
     await emit('sales_order.received', id, { id, result: shorts.length ? 'short' : 'done',
       lines: o.items.filter((i) => i.qty > 0).map((i) => ({ productId: i.pid, receivedQty: got(i) })) });
   }
-  const log = [...o.log, logEntry(role, shorts.length ? 'أكّد الاستلام بنواقص وفُتحت تذكرة' : 'أكّد الاستلام الكامل')];
+  const log = [...o.log, logEntry(ctx, shorts.length ? 'أكّد الاستلام بنواقص وفُتحت تذكرة' : 'أكّد الاستلام الكامل')];
   await sql`UPDATE orders SET log = ${JSON.stringify(log)} WHERE id = ${id}`;
   let msg;
 
@@ -252,17 +338,18 @@ async function ordersReceive(role, { id, recv }) {
     const seq = await nextSeq('ticket');
     const tid = `TKT-${seq}`;
     const recvQty = (i) => Math.min(i.qty, Math.max(0, Math.floor(Number(recv[i.pid].recv ?? 0))));
-    const val = shorts.reduce((s, i) => s + pm[i.pid].price * (i.qty - recvQty(i)), 0) * (1 + VAT);
-    await sql`INSERT INTO tickets (id, ord, customer, descr, qty, val, st, date_label)
-              VALUES (${tid}, ${id}, ${`مطاعم البلدة — ${o.branch}`},
-                      ${shorts.map((i) => pm[i.pid].name).join(' · ')},
-                      ${`ناقص ${shorts.map((i) => `${i.qty - recvQty(i)} × ${pm[i.pid].unit}`).join(' + ')}`},
-                      ${val}, 'open', 'الآن')`;
-    await sql`UPDATE orders SET st = 'short', stamps = ${JSON.stringify(stamps)}, ticket_id = ${tid} WHERE id = ${id}`;
+    const priceOf = (i) => i.price ?? pm[i.pid]?.price ?? 0;
+    const val = shorts.reduce((s, i) => s + priceOf(i) * (i.qty - recvQty(i)), 0) * (1 + VAT);
+    await sql`INSERT INTO tickets (id, ord, customer, descr, qty, val, st, date_label, client_id)
+              VALUES (${tid}, ${id}, ${`${ctx.org} — ${o.branch}`},
+                      ${shorts.map((i) => pm[i.pid]?.name || i.pid).join(' · ')},
+                      ${`ناقص ${shorts.map((i) => `${i.qty - recvQty(i)} × ${pm[i.pid]?.unit || ''}`).join(' + ')}`},
+                      ${val}, 'open', 'الآن', ${cid})`;
+    await sql`UPDATE orders SET st = 'short', stamps = ${JSON.stringify(stamps)}, ticket_id = ${tid}, updated_at = now() WHERE id = ${id}`;
     await notify(['b2b'], 'تذاكر', `تذكرة نواقص جديدة ${tid} على ${id}`);
     msg = `أُكّد الاستلام وفُتحت تذكرة نواقص ${tid} — أُرسلت إلى B2B لحلّها`;
   } else {
-    await sql`UPDATE orders SET st = 'done', stamps = ${JSON.stringify(stamps)} WHERE id = ${id}`;
+    await sql`UPDATE orders SET st = 'done', stamps = ${JSON.stringify(stamps)}, updated_at = now() WHERE id = ${id}`;
     msg = `تم تأكيد استلام ${id} بالكامل`;
   }
   return msg;
@@ -270,143 +357,169 @@ async function ordersReceive(role, { id, recv }) {
 
 // ============ التذاكر ============
 
-async function ticketsResolve(role, { id }) {
-  if (role !== 'b2b') throw httpError(403, 'تسوية التذاكر صلاحية B2B');
+async function ticketOf(id) {
   const [t] = await sql`SELECT * FROM tickets WHERE id = ${id}`;
   if (!t) throw httpError(404, 'التذكرة غير موجودة');
+  return t;
+}
+
+async function ticketsResolve(ctx, { id }) {
+  if (!isB2B(ctx)) throw httpError(403, 'تسوية التذاكر صلاحية B2B');
+  const t = await ticketOf(id);
   if (t.st === 'resolved') throw httpError(400, 'التذكرة مقفلة مسبقًا');
+  const cid = Number(t.client_id) || null;
+  if (cid == null) throw httpError(400, 'التذكرة غير مرتبطة بمنشأة — لا يمكن إصدار إشعار دائن');
   const seq = await nextSeq('cn');
   const cn = `CN-${seq}`;
   const val = Number(t.val);
   await sql`UPDATE tickets SET st = 'resolved', cn = ${cn}, hold_reason = NULL WHERE id = ${id}`;
-  await sql`INSERT INTO invoices (id, ref, due, amt, rem, st) VALUES (${cn}, ${`نواقص ${t.ord}`}, 'إشعار دائن', ${-val}, 0, 'credit')`;
-  await sql`UPDATE wallet SET bal = bal + ${val} WHERE org_cr = ${SAMPLE_CR}`;
-  await sql`INSERT INTO wallet_tx (org_cr, t, d, amt) VALUES (${SAMPLE_CR}, ${`إشعار دائن ${cn} — تسوية ${id}`}, 'الآن', ${val})`;
-  await notify(['worker', 'ops', 'owner', 'frz', 'fin'], 'مالية', `حُلّت تذكرة النواقص ${id} — صدر إشعار دائن ${cn} بقيمة ${fmt(val)} ر.س في محفظتك`);
+  await sql`INSERT INTO invoices (id, ref, due, amt, rem, st, client_id) VALUES (${cn}, ${`نواقص ${t.ord}`}, 'إشعار دائن', ${-val}, 0, 'credit', ${cid})`;
+  await walletMove(cid, val, `إشعار دائن ${cn} — تسوية ${id}`);
+  await notify(['worker', 'ops', 'owner', 'frz', 'frzs', 'fin'], 'مالية', `حُلّت تذكرة النواقص ${id} — صدر إشعار دائن ${cn} بقيمة ${fmt(val)} ر.س في محفظتك`, cid);
   return `صدر إشعار دائن ${cn} بقيمة ${fmt(val)} ر.س وأُقفلت ${id}`;
 }
 
-async function ticketsHold(role, { id, reason }) {
-  if (role !== 'b2b') throw httpError(403, 'تعليق التذاكر صلاحية B2B');
+async function ticketsHold(ctx, { id, reason }) {
+  if (!isB2B(ctx)) throw httpError(403, 'تعليق التذاكر صلاحية B2B');
   const text = (reason || '').trim();
   if (text.length < 5) throw httpError(400, 'سبب التعليق إلزامي');
+  const t = await ticketOf(id);
   await sql`UPDATE tickets SET st = 'held', hold_reason = ${text} WHERE id = ${id} AND st = 'open'`;
-  await notify(['worker', 'ops', 'owner', 'frz', 'fin'], 'تذاكر', `علّق B2B تذكرة النواقص ${id} — السبب: ${text}`);
+  await notify(['worker', 'ops', 'owner', 'frz', 'frzs', 'fin'], 'تذاكر', `علّق B2B تذكرة النواقص ${id} — السبب: ${text}`, Number(t.client_id) || null);
   return `عُلّقت التذكرة ${id} — أُشعر العميل بالسبب`;
 }
 
-async function ticketsResume(role, { id }) {
-  if (role !== 'b2b') throw httpError(403, 'استئناف التذاكر صلاحية B2B');
+async function ticketsResume(ctx, { id }) {
+  if (!isB2B(ctx)) throw httpError(403, 'استئناف التذاكر صلاحية B2B');
   await sql`UPDATE tickets SET st = 'open', hold_reason = NULL WHERE id = ${id} AND st = 'held'`;
   return `استؤنفت التذكرة ${id}`;
 }
 
 // ============ المحفظة والفواتير ============
 
-async function walletTopup(role, { amt, method, proof }) {
-  if (!['owner', 'fin', 'frz', 'frzs', 'fr'].includes(role)) throw httpError(403, 'شحن المحفظة للمالك والمالية');
+async function walletTopup(ctx, { amt, method, proof }) {
+  if (!['owner', 'fin', 'frz', 'frzs', 'fr'].includes(ctx.role)) throw httpError(403, 'شحن المحفظة للمالك والمالية');
+  const cid = myClient(ctx);
   const amount = Math.floor(Number(amt));
   if (!(amount >= 500 && amount <= 1_000_000)) throw httpError(400, 'مبلغ غير صالح');
+  await assertWalletActive(cid);
 
   // التحويل البنكي: صورة الحوالة إلزامية، ويذهب الطلب لتعميد B2B قبل إضافة المبلغ
   if (method === 'تحويل بنكي') {
     if (!proof) throw httpError(400, 'أرفق صورة الحوالة أولًا — إلزامية للتحويل البنكي');
     const seq = await nextSeq('tu');
     const id = `TU-${seq}`;
-    await sql`INSERT INTO topup_reqs (id, org, by_user, amt, proof, date_label)
-              VALUES (${id}, ${ROLES[role].org}, ${ROLES[role].user}, ${amount}, ${`حوالة-${seq}.jpg`}, 'الآن')`;
-    await notify(['b2b'], 'مالية', `طلب شحن محفظة بتحويل بنكي ${id} — ${fmt0(amount)} ر.س من ${ROLES[role].org}`);
+    await sql`INSERT INTO topup_reqs (id, org, by_user, amt, proof, date_label, client_id)
+              VALUES (${id}, ${ctx.org}, ${ctx.name}, ${amount}, ${`حوالة-${seq}.jpg`}, 'الآن', ${cid})`;
+    await notify(['b2b'], 'مالية', `طلب شحن محفظة بتحويل بنكي ${id} — ${fmt0(amount)} ر.س من ${ctx.org}`);
     return `أُرسل طلب الشحن ${id} — تضاف ${fmt0(amount)} ر.س فور تعميد B2B للتحويل`;
   }
 
-  await sql`UPDATE wallet SET bal = bal + ${amount} WHERE org_cr = ${SAMPLE_CR}`;
-  await sql`INSERT INTO wallet_tx (org_cr, t, d, amt) VALUES (${SAMPLE_CR}, ${'شحن المحفظة — مدى'}, 'الآن', ${amount})`;
+  await walletMove(cid, amount, 'شحن المحفظة — مدى');
   return `تم شحن ${fmt0(amount)} ر.س فورًا — صدر إيصال PDF`;
 }
 
 // ============ التعميدات المالية (B2B) ============
 
-async function fintuApprove(role, { id }) {
-  if (role !== 'b2b') throw httpError(403, 'تعميد التحويلات صلاحية B2B');
+async function fintuApprove(ctx, { id }) {
+  if (!isB2B(ctx)) throw httpError(403, 'تعميد التحويلات صلاحية B2B');
   const [r] = await sql`SELECT * FROM topup_reqs WHERE id = ${id}`;
   if (!r) throw httpError(404, 'طلب الشحن غير موجود');
+  if (r.client_id == null) throw httpError(400, 'طلب الشحن غير مرتبط بمنشأة');
   const amount = Number(r.amt);
-  await sql`UPDATE wallet SET bal = bal + ${amount} WHERE org_cr = ${SAMPLE_CR}`;
-  await sql`INSERT INTO wallet_tx (org_cr, t, d, amt) VALUES (${SAMPLE_CR}, ${'شحن المحفظة — تحويل بنكي (عمّده B2B)'}, 'الآن', ${amount})`;
-  await sql`DELETE FROM topup_reqs WHERE id = ${id}`;
-  await notify(['owner', 'fin', 'frz', 'frzs', 'fr'], 'مالية', `عمّد B2B التحويل البنكي ${id} — أُضيفت ${fmt0(amount)} ر.س للمحفظة`);
+  const cid = Number(r.client_id);
+  // الحذف أولًا وبشرط وجود الصف: تعميد مزدوج لا يضيف المبلغ مرتين
+  const gone = await sql`DELETE FROM topup_reqs WHERE id = ${id} RETURNING id`;
+  if (!gone.length) throw httpError(409, 'طلب الشحن عُولج مسبقًا');
+  await walletMove(cid, amount, 'شحن المحفظة — تحويل بنكي (عمّده B2B)');
+  await notify(['owner', 'fin', 'frz', 'frzs', 'fr'], 'مالية', `عمّد B2B التحويل البنكي ${id} — أُضيفت ${fmt0(amount)} ر.س للمحفظة`, cid);
   return `عُمّد التحويل ${id} وأُضيف المبلغ إلى محفظة ${r.org}`;
 }
 
-async function fintuReject(role, { id }) {
-  if (role !== 'b2b') throw httpError(403, 'رفض التحويلات صلاحية B2B');
+async function fintuReject(ctx, { id }) {
+  if (!isB2B(ctx)) throw httpError(403, 'رفض التحويلات صلاحية B2B');
   const [r] = await sql`SELECT * FROM topup_reqs WHERE id = ${id}`;
   if (!r) throw httpError(404, 'طلب الشحن غير موجود');
   await sql`DELETE FROM topup_reqs WHERE id = ${id}`;
-  await notify(['owner', 'fin', 'frz', 'frzs', 'fr'], 'مالية', `رفض B2B التحويل البنكي ${id} — لم يصل المبلغ للحساب البنكي، تواصلوا مع الدعم`);
+  await notify(['owner', 'fin', 'frz', 'frzs', 'fr'], 'مالية', `رفض B2B التحويل البنكي ${id} — لم يصل المبلغ للحساب البنكي، تواصلوا مع الدعم`, Number(r.client_id) || null);
   return `رُفض التحويل ${id} وأُشعر العميل`;
 }
 
-async function invoicesPay(role, { id }) {
-  if (!['owner', 'fin', 'frz', 'frzs', 'fr'].includes(role)) throw httpError(403, 'السداد للمالك والمالية');
+async function invoicesPay(ctx, { id }) {
+  if (!['owner', 'fin', 'frz', 'frzs', 'fr'].includes(ctx.role)) throw httpError(403, 'السداد للمالك والمالية');
+  const cid = myClient(ctx);
   const [v] = await sql`SELECT * FROM invoices WHERE id = ${id}`;
-  if (!v) throw httpError(404, 'الفاتورة غير موجودة');
+  if (!v || Number(v.client_id) !== cid) throw httpError(404, 'الفاتورة غير موجودة');
   if (!['unpaid', 'part'].includes(v.st)) throw httpError(400, 'الفاتورة ليست مستحقة');
+  await assertWalletActive(cid);
   const rem = Number(v.rem);
-  const [w] = await sql`SELECT bal::float FROM wallet WHERE org_cr = ${SAMPLE_CR}`;
-  if (w.bal < rem) throw httpError(400, 'رصيد المحفظة لا يكفي لسداد الفاتورة');
-  await sql`UPDATE wallet SET bal = bal - ${rem} WHERE org_cr = ${SAMPLE_CR}`;
-  await sql`INSERT INTO wallet_tx (org_cr, t, d, amt) VALUES (${SAMPLE_CR}, ${`سداد فاتورة ${id} من المحفظة`}, 'الآن', ${-rem})`;
-  await sql`UPDATE invoices SET st = 'paid', rem = 0, due = 'سُددت الآن' WHERE id = ${id}`;
-  return `سُددت ${id} من المحفظة — الرصيد الجديد ${fmt(w.bal - rem)} ر.س`;
+  const w = await walletOf(cid);
+  if (Number(w.bal) < rem) throw httpError(400, 'رصيد المحفظة لا يكفي لسداد الفاتورة');
+  const paid = await sql`UPDATE invoices SET st = 'paid', rem = 0, due = 'سُددت الآن' WHERE id = ${id} AND st IN ('unpaid', 'part') RETURNING id`;
+  if (!paid.length) throw httpError(409, 'الفاتورة سُددت مسبقًا');
+  await walletMove(cid, -rem, `سداد فاتورة ${id} من المحفظة`);
+  return `سُددت ${id} من المحفظة — الرصيد الجديد ${fmt(Number(w.bal) - rem)} ر.س`;
 }
 
 // ============ اللستات والاقتراحات ============
 
-async function listsSave(role, { name, items }) {
+async function listsSave(ctx, { name, items }) {
   const n = (name || '').trim();
   if (!n) throw httpError(400, 'اكتب اسم اللستة أولًا');
   if (!Array.isArray(items) || !items.length) throw httpError(400, 'أضف صنفًا واحدًا على الأقل');
-  await sql`INSERT INTO saved_lists (name, items) VALUES (${n}, ${JSON.stringify(items)})`;
+  await sql`INSERT INTO saved_lists (name, items, client_id) VALUES (${n.slice(0, 80)}, ${JSON.stringify(items.slice(0, 200))}, ${ctx.clientId})`;
   return `حُفظت لستة «${n}» — تجدها فوق الكتالوج`;
 }
 
-async function reqsSubmit(role, { name, unit, note }) {
-  if (!['owner', 'fr'].includes(role)) throw httpError(403, 'اقتراح المنتجات للمالك أو المانح');
+async function reqsSubmit(ctx, { name, unit, note }) {
+  if (!['owner', 'fr'].includes(ctx.role)) throw httpError(403, 'اقتراح المنتجات للمالك أو المانح');
+  const cid = myClient(ctx);
   const n = (name || '').trim();
   if (!n) throw httpError(400, 'اكتب اسم المنتج المطلوب أولًا');
   const seq = await nextSeq('req');
   const id = `REQ-${seq}`;
-  await sql`INSERT INTO prod_reqs (id, name, unit, by_org, by_user, note, date_label, st)
-            VALUES (${id}, ${n}, ${(unit || '').trim()},
-                    ${role === 'fr' ? 'دوار السعادة — المانح' : 'مطاعم البلدة'},
-                    ${ROLES[role].user}, ${(note || '').trim() || '—'}, 'الآن', 'pend')`;
+  await sql`INSERT INTO prod_reqs (id, name, unit, by_org, by_user, note, date_label, st, client_id)
+            VALUES (${id}, ${n}, ${(unit || '').trim()}, ${ctx.role === 'fr' ? `${ctx.org} — المانح` : ctx.org},
+                    ${ctx.name}, ${(note || '').trim() || '—'}, 'الآن', 'pend', ${cid})`;
+  await notify(['b2b'], 'اعتمادات', `اقتراح منتج جديد ${id} — «${n}» من ${ctx.org}`);
   return `أُرسل اقتراحك ${id} لفريق B2B — يراجعه ويسعّره خلال يوم عمل`;
 }
 
-/** B2B يسعّر الاقتراح ويعيده للعميل لاعتماد السعر قبل الإضافة */
-async function reqsPrice(role, { id, price }) {
-  if (role !== 'b2b') throw httpError(403, 'تسعير الاقتراحات صلاحية B2B');
-  const p = Number(price);
-  if (!(p > 0 && p <= 100000)) throw httpError(400, 'سعر غير صالح');
+async function reqOf(id) {
   const [r] = await sql`SELECT * FROM prod_reqs WHERE id = ${id}`;
   if (!r) throw httpError(404, 'الاقتراح غير موجود');
+  return r;
+}
+
+/** اقتراح يخص منشأة الجلسة (أو أي اقتراح لـ B2B) */
+async function myReq(ctx, id) {
+  const r = await reqOf(id);
+  if (!isB2B(ctx) && Number(r.client_id) !== ctx.clientId) throw httpError(404, 'الاقتراح غير موجود');
+  return r;
+}
+
+/** B2B يسعّر الاقتراح ويعيده للعميل لاعتماد السعر قبل الإضافة */
+async function reqsPrice(ctx, { id, price }) {
+  if (!isB2B(ctx)) throw httpError(403, 'تسعير الاقتراحات صلاحية B2B');
+  const p = Number(price);
+  if (!(p > 0 && p <= 100000)) throw httpError(400, 'سعر غير صالح');
+  const r = await reqOf(id);
+  if (!['pend', 'priced'].includes(r.st)) throw httpError(400, 'الاقتراح مغلق — لا يُسعَّر');
   await sql`UPDATE prod_reqs SET st = 'priced', price = ${p} WHERE id = ${id}`;
-  await notify(['worker', 'ops', 'owner', 'fin', 'frz', 'frzs', 'fr'], 'اعتمادات',
-    `سعّر B2B اقتراحك «${r.name}» بـ ${fmt(p)} ر.س — بانتظار اعتمادك`);
+  await notify(['owner', 'fin', 'frz', 'frzs', 'fr'], 'اعتمادات',
+    `سعّر B2B اقتراحك «${r.name}» بـ ${fmt(p)} ر.س — بانتظار اعتمادك`, Number(r.client_id) || null);
   return `سُعّر «${r.name}» وأُرسل للعميل للاعتماد`;
 }
 
 /** العميل يعتمد السعر المقترح — يُضاف المنتج للكتالوج بالسعر المتفق عليه */
-async function reqsClientAccept(role, { id }) {
-  if (!['owner', 'fr', 'frz', 'frzs'].includes(role)) throw httpError(403, 'اعتماد السعر لمقدّم الاقتراح');
-  const [r] = await sql`SELECT * FROM prod_reqs WHERE id = ${id}`;
-  if (!r) throw httpError(404, 'الاقتراح غير موجود');
+async function reqsClientAccept(ctx, { id }) {
+  if (!['owner', 'fr', 'frz', 'frzs'].includes(ctx.role)) throw httpError(403, 'اعتماد السعر لمقدّم الاقتراح');
+  const cid = myClient(ctx);
+  const r = await myReq(ctx, id);
   if (r.st !== 'priced') throw httpError(400, 'الاقتراح ليس بانتظار اعتماد السعر');
 
   // طلب سلة (v6): تنزل كل المنتجات في كتالوج العميل الخاص بالأسعار المتفق عليها
   if (r.kind === 'cat') {
-    const cid = Number(r.client_id) || sessionClientId(role);
     for (const it of r.items || []) {
       if (it.price == null) continue;
       await sql`INSERT INTO client_products (client_id, pid, price) VALUES (${cid}, ${it.pid}, ${Number(it.price)})
@@ -429,10 +542,10 @@ async function reqsClientAccept(role, { id }) {
 // ============ سلة الإضافة من الكتالوج (v6) ============
 
 /** العميل يرسل سلة منتجات من كتالوج B2B كطلب إضافة واحد */
-async function reqsBktSend(role, { pids }) {
-  if (!['owner', 'frz', 'frzs'].includes(role)) throw httpError(403, 'طلب الإضافة لمدير حساب المنشأة');
+async function reqsBktSend(ctx, { pids }) {
+  if (!['owner', 'frz', 'frzs'].includes(ctx.role)) throw httpError(403, 'طلب الإضافة لمدير حساب المنشأة');
   if (!Array.isArray(pids) || !pids.length) throw httpError(400, 'السلة فارغة — أضف منتجات من كتالوج B2B أولًا');
-  const cid = sessionClientId(role);
+  const cid = myClient(ctx);
   const pm = await productMap();
 
   // استبعاد ما هو ضمن كتالوج العميل مسبقًا أو ضمن طلب إضافة مفتوح
@@ -446,124 +559,148 @@ async function reqsBktSend(role, { pids }) {
   const id = `REQ-${seq}`;
   const names = clean.slice(0, 3).map((p) => pm[p].name).join('، ');
   await sql`INSERT INTO prod_reqs (id, name, unit, by_org, by_user, note, date_label, st, kind, items, client_id)
-            VALUES (${id}, ${`طلب إضافة من الكتالوج — ${clean.length} منتجات`}, '', ${ROLES[role].org}, ${ROLES[role].user},
+            VALUES (${id}, ${`طلب إضافة من الكتالوج — ${clean.length} منتجات`}, '', ${ctx.org}, ${ctx.name},
                     ${`${names}${clean.length > 3 ? '…' : ''}`}, 'الآن', 'pend', 'cat',
                     ${JSON.stringify(clean.map((p) => ({ pid: p })))}, ${cid})`;
-  await notify(['b2b'], 'اعتمادات', `طلب إضافة من الكتالوج ${id} — ${clean.length} منتجات من ${ROLES[role].org} بانتظار تسعيرك`);
+  await notify(['b2b'], 'اعتمادات', `طلب إضافة من الكتالوج ${id} — ${clean.length} منتجات من ${ctx.org} بانتظار تسعيرك`);
   return `أُرسل طلب الإضافة ${id} (${clean.length} منتجات) — يسعّره B2B ثم تعتمد الأسعار لتنزل في منتجاتك`;
 }
 
 /** B2B يسعّر كل منتج في طلب السلة ويعيده للعميل للاعتماد */
-async function reqsRcpConfirm(role, { id, prices }) {
-  if (role !== 'b2b') throw httpError(403, 'تسعير طلبات الإضافة صلاحية B2B');
-  const [r] = await sql`SELECT * FROM prod_reqs WHERE id = ${id}`;
-  if (!r) throw httpError(404, 'الطلب غير موجود');
+async function reqsRcpConfirm(ctx, { id, prices }) {
+  if (!isB2B(ctx)) throw httpError(403, 'تسعير طلبات الإضافة صلاحية B2B');
+  const r = await reqOf(id);
   if (r.kind !== 'cat') throw httpError(400, 'هذا ليس طلب إضافة من الكتالوج');
   const pm = await productMap();
-  const items = (r.items || []).map((it) => {
+  const items = (r.items || []).filter((it) => pm[it.pid]).map((it) => {
     const p = Number(prices?.[it.pid]);
     const val = p > 0 && p <= 100000 ? Math.round(p * 100) / 100 : Math.round(pm[it.pid].price * (1 - 0.05) * 100) / 100;
     return { pid: it.pid, price: val };
   });
   await sql`UPDATE prod_reqs SET st = 'priced', items = ${JSON.stringify(items)} WHERE id = ${id}`;
-  await notify(['owner', 'fin', 'frz', 'frzs', 'fr'], 'اعتمادات', `سعّر B2B طلب الإضافة ${id} — راجع الأسعار الخاصة واعتمدها لتنزل في منتجاتك`);
+  await notify(['owner', 'fin', 'frz', 'frzs', 'fr'], 'اعتمادات', `سعّر B2B طلب الإضافة ${id} — راجع الأسعار الخاصة واعتمدها لتنزل في منتجاتك`, Number(r.client_id) || null);
   return `أُرسلت الأسعار الخاصة لطلب ${id} للعميل للاعتماد`;
 }
 
-async function reqsClientDecline(role, { id }) {
-  if (!['owner', 'fr', 'frz', 'frzs'].includes(role)) throw httpError(403, 'رفض السعر لمقدّم الاقتراح');
-  const [r] = await sql`SELECT * FROM prod_reqs WHERE id = ${id}`;
-  if (!r) throw httpError(404, 'الاقتراح غير موجود');
+async function reqsClientDecline(ctx, { id }) {
+  if (!['owner', 'fr', 'frz', 'frzs'].includes(ctx.role)) throw httpError(403, 'رفض السعر لمقدّم الاقتراح');
+  const r = await myReq(ctx, id);
+  if (r.st !== 'priced') throw httpError(400, 'الاقتراح ليس بانتظار اعتماد السعر');
   await sql`UPDATE prod_reqs SET st = 'no' WHERE id = ${id}`;
   await notify(['b2b'], 'اعتمادات', `رفض العميل تسعير «${r.name}» (${fmt(Number(r.price) || 0)} ر.س) — أُغلق الاقتراح`);
   return 'رفضت السعر — وصل الإشعار لفريق B2B';
 }
 
-async function reqsReject(role, { id }) {
-  if (role !== 'b2b') throw httpError(403, 'رفض الاقتراحات صلاحية B2B');
+async function reqsReject(ctx, { id }) {
+  if (!isB2B(ctx)) throw httpError(403, 'رفض الاقتراحات صلاحية B2B');
+  const r = await reqOf(id);
   await sql`UPDATE prod_reqs SET st = 'no' WHERE id = ${id}`;
+  await notify(['owner', 'fin', 'frz', 'frzs', 'fr'], 'اعتمادات', `اعتذر B2B عن الاقتراح «${r.name}»`, Number(r.client_id) || null);
   return 'رُفض الاقتراح وأُشعر العميل';
 }
 
 // ============ الفرنشايز ============
 
-async function frsCreate(role, { name, cr, kind, region }) {
+/** ينشئ عميلًا جديدًا ومحفظته الافتتاحية؛ يعيد المعرّف */
+async function newClient({ name, cr, city, type = null }) {
+  const id = Date.now();
+  await sql`INSERT INTO clients (id, name, cr, city, st, bal, cr_limit, used, wst, branches, staff, type)
+            VALUES (${id}, ${name}, ${cr}, ${city || '—'}, 'ok', 0, 20000, 0, 'ok', '[]', '[]', ${type})`;
+  return id;
+}
+
+async function frsCreate(ctx, { name, cr, kind, region }) {
+  const { role } = ctx;
   if (!['fr', 'frzs', 'b2b'].includes(role)) throw httpError(403, 'إنشاء الممنوحين للمانح أو السوبر');
   const n = (name || '').trim(), c = (cr || '').trim();
   if (!n || !c) throw httpError(400, 'أدخل اسم المنشأة ورقم السجل التجاري');
   const isSuper = role === 'fr' && kind === 'super';
   const reg = (region || '').trim();
   if (isSuper && !reg) throw httpError(400, 'حدد منطقة امتياز الممنوح السوبر');
-  const id = Date.now();
-  const city = role === 'frzs' ? 'المنطقة الشرقية' : isSuper ? reg : '—';
-  await sql`INSERT INTO frs (id, name, city, cr, st, active, parent, super, region)
-            VALUES (${id}, ${n}, ${city}, ${c}, 'new', true,
-                    ${role === 'frzs' ? SUPER_FR_ID : null}, ${isSuper}, ${isSuper ? reg : null})`;
-  await sql`INSERT INTO clients (id, name, cr, city, st, bal, cr_limit, used, wst, branches, staff)
-            VALUES (${id}, ${n}, ${c}, '—', 'ok', 0, 20000, 0, 'ok', '[]', '[]')`;
+  let parent = null; let granter = null; let city = isSuper ? reg : '—';
+  if (role === 'frzs') {
+    // السوبر ينشئ تابعًا له: الأب = سجله في الشبكة، والمانح = مانحه
+    const [mine] = await sql`SELECT id, granter_id, region FROM frs WHERE client_id = ${myClient(ctx)}`;
+    if (!mine) throw httpError(403, 'حسابك غير مسجّل كممنوح سوبر');
+    parent = Number(mine.id); granter = mine.granter_id == null ? null : Number(mine.granter_id); city = mine.region || '—';
+  } else if (role === 'fr') {
+    granter = myClient(ctx);
+  }
+  const id = await newClient({ name: n, cr: c, city: '—', type: isSuper ? 'ممنوح سوبر' : 'ممنوح بيسك' });
+  await sql`INSERT INTO frs (id, name, city, cr, st, active, parent, super, region, client_id, granter_id)
+            VALUES (${id}, ${n}, ${city}, ${c}, 'new', true, ${parent}, ${isSuper}, ${isSuper ? reg : null}, ${id}, ${granter})`;
+  await notify(['b2b'], 'اعتمادات', `ممنوح جديد «${n}» بانتظار تعميدك — أنشأه ${ctx.org}`);
   return isSuper
     ? `أُنشئ ممنوح سوبر لمنطقة «${reg}» — تعميده وتفعيله بيد B2B أدمن`
     : 'أُنشئ الممنوح — تعميده وتفعيله بيد B2B أدمن';
 }
 
-async function frsApprove(role, { id }) {
-  if (role !== 'b2b') throw httpError(403, 'تعميد الممنوحين وتفعيلهم حصريًا بيد B2B');
+async function frsApprove(ctx, { id }) {
+  if (!isB2B(ctx)) throw httpError(403, 'تعميد الممنوحين وتفعيلهم حصريًا بيد B2B');
   const [f] = await sql`SELECT name FROM frs WHERE id = ${id}`;
   if (!f) throw httpError(404, 'الممنوح غير موجود');
   await sql`UPDATE frs SET st = 'ok' WHERE id = ${id}`;
   return `عمّد B2B الممنوح «${f.name}» — فُعّل حسابه وأُنشئت محفظته المستقلة`;
 }
 
-async function frsToggle(role, { id }) {
-  if (!['fr', 'b2b'].includes(role)) throw httpError(403, 'لا صلاحية');
-  const [f] = await sql`SELECT name, active FROM frs WHERE id = ${id}`;
-  if (!f) throw httpError(404, 'الممنوح غير موجود');
+async function frsToggle(ctx, { id }) {
+  if (!['fr', 'b2b'].includes(ctx.role)) throw httpError(403, 'لا صلاحية');
+  const [f] = await sql`SELECT name, active, granter_id FROM frs WHERE id = ${id}`;
+  if (!f || (!isB2B(ctx) && Number(f.granter_id) !== ctx.clientId)) throw httpError(404, 'الممنوح غير موجود');
   await sql`UPDATE frs SET active = ${!f.active} WHERE id = ${id}`;
   return f.active ? `أُوقف حساب ${f.name}` : `أُعيد تفعيل ${f.name}`;
 }
 
-async function frsAddSub(role, { clientId, name, cr }) {
-  if (!['b2b', 'fr'].includes(role)) throw httpError(403, 'لا صلاحية');
-  const [client] = await sql`SELECT name FROM clients WHERE id = ${clientId}`;
-  if (!client) throw httpError(404, 'العميل غير موجود');
-  const [parent] = await sql`SELECT id, region FROM frs WHERE name = ${client.name} AND super = true`;
+async function frsAddSub(ctx, { clientId, name, cr }) {
+  if (!['b2b', 'fr'].includes(ctx.role)) throw httpError(403, 'لا صلاحية');
+  const sid = await assertClientAccess(ctx, clientId, { network: true });
+  const [parent] = await sql`SELECT id, region, granter_id FROM frs WHERE client_id = ${sid} AND super = true`;
   if (!parent) throw httpError(400, 'هذا العميل ليس ممنوحًا سوبر');
   const n = (name || '').trim(), c = (cr || '').trim();
   if (!n || !c) throw httpError(400, 'أدخل اسم منشأة الممنوح التابع ورقم سجله التجاري');
-  const id = Date.now();
-  await sql`INSERT INTO frs (id, name, city, cr, st, active, parent)
-            VALUES (${id}, ${n}, ${parent.region || '—'}, ${c}, 'new', true, ${parent.id})`;
-  await sql`INSERT INTO clients (id, name, cr, city, st, bal, cr_limit, used, wst, branches, staff)
-            VALUES (${id}, ${n}, ${c}, ${parent.region || '—'}, 'ok', 0, 20000, 0, 'ok', '[]', '[]')`;
+  const id = await newClient({ name: n, cr: c, city: parent.region || '—', type: 'ممنوح بيسك' });
+  await sql`INSERT INTO frs (id, name, city, cr, st, active, parent, client_id, granter_id)
+            VALUES (${id}, ${n}, ${parent.region || '—'}, ${c}, 'new', true, ${parent.id}, ${id}, ${parent.granter_id})`;
   return `أُنشئ الممنوح التابع «${n}» ضمن ${parent.region || 'منطقة السوبر'} — تعميده وتفعيله بيد B2B أدمن`;
 }
 
 // ============ العملاء (B2B) ============
 
-async function clientsToggleAccount(role, { id }) {
-  if (role !== 'b2b') throw httpError(403, 'إيقاف العملاء صلاحية B2B');
-  const [c] = await sql`SELECT name, st FROM clients WHERE id = ${id}`;
-  if (!c) throw httpError(404, 'العميل غير موجود');
+async function clientsToggleAccount(ctx, { id }) {
+  if (!isB2B(ctx)) throw httpError(403, 'إيقاف العملاء صلاحية B2B');
+  const c = await clientRow(id);
   const susp = c.st === 'susp';
   await sql`UPDATE clients SET st = ${susp ? 'ok' : 'susp'} WHERE id = ${id}`;
   return susp ? `أُعيد تفعيل ${c.name}` : `أُوقف ${c.name} — لا يستطيع الطلب حتى إعادة التفعيل`;
 }
 
-async function clientsToggleWallet(role, { id }) {
-  if (role !== 'b2b') throw httpError(403, 'تجميد المحافظ صلاحية B2B');
-  const [c] = await sql`SELECT name, wst FROM clients WHERE id = ${id}`;
-  if (!c) throw httpError(404, 'العميل غير موجود');
+async function clientsToggleWallet(ctx, { id }) {
+  if (!isB2B(ctx)) throw httpError(403, 'تجميد المحافظ صلاحية B2B');
+  const c = await clientRow(id);
   const frozen = c.wst === 'frozen';
   await sql`UPDATE clients SET wst = ${frozen ? 'ok' : 'frozen'} WHERE id = ${id}`;
   return frozen ? `فُك تجميد محفظة ${c.name}` : `جُمّدت محفظة ${c.name} — لا شحن ولا صرف حتى فك التجميد`;
 }
 
-async function clientsPatch(role, { id, branches, staff }, msg) {
-  if (!['b2b', 'fr', 'frzs'].includes(role)) throw httpError(403, 'لا صلاحية');
-  const [c] = await sql`SELECT id FROM clients WHERE id = ${id}`;
-  if (!c) throw httpError(404, 'العميل غير موجود');
-  if (branches) await sql`UPDATE clients SET branches = ${JSON.stringify(branches)} WHERE id = ${id}`;
-  if (staff) await sql`UPDATE clients SET staff = ${JSON.stringify(staff)} WHERE id = ${id}`;
+/**
+ * فروع عميل من ملفه (B2B، أو المانح/السوبر لشبكته): القائمة المرسلة تصبح فروعه — يُضاف الجديد ويُزال المحذوف.
+ * الحسابات تُدار بأوامر users.* (لم تعد قائمة أسماء داخل سجل العميل).
+ */
+async function clientsPatch(ctx, { id, branches }, msg) {
+  if (!['b2b', 'fr', 'frzs'].includes(ctx.role)) throw httpError(403, 'لا صلاحية');
+  const cid = await assertClientAccess(ctx, id, { network: true });
+  const c = await clientRow(cid);
+  if (Array.isArray(branches)) {
+    const want = branches.filter((b) => b && String(b.name || '').trim()).slice(0, 200)
+      .map((b) => ({ name: String(b.name).trim().slice(0, 80), city: String(b.city || c.city || '—').slice(0, 60), loc: b.loc || null }));
+    const names = want.map((b) => b.name);
+    const have = await sql`SELECT name FROM branches WHERE client_id = ${cid}`;
+    for (const h of have) if (!names.includes(h.name)) await sql`DELETE FROM branches WHERE client_id = ${cid} AND name = ${h.name}`;
+    for (const b of want) {
+      await sql`INSERT INTO branches (client_id, name, city, st, loc) VALUES (${cid}, ${b.name}, ${b.city}, 'ok', ${b.loc ? JSON.stringify(b.loc) : null})
+                ON CONFLICT (client_id, name) DO NOTHING`;
+    }
+  }
   return msg || 'تم التحديث';
 }
 
@@ -571,23 +708,21 @@ async function clientsPatch(role, { id, branches, staff }, msg) {
 const CLIENT_TYPES = ['مستقل', 'مانح', 'ممنوح بيسك', 'ممنوح سوبر'];
 
 /** B2B ينشئ عميلًا جديدًا مكتمل النوع (من لوحة العملاء أو باعتماد طلب تسجيل) */
-async function clientsCreate(role, { name, cr, city, type, granterId, region }) {
-  if (role !== 'b2b') throw httpError(403, 'إنشاء العملاء صلاحية B2B');
+async function clientsCreate(ctx, { name, cr, city, type, granterId, region }) {
+  if (!isB2B(ctx)) throw httpError(403, 'إنشاء العملاء صلاحية B2B');
   const n = (name || '').trim(), c = (cr || '').trim();
   if (!n || !c) throw httpError(400, 'أدخل اسم المنشأة ورقم السجل التجاري');
   const ty = CLIENT_TYPES.includes(type) ? type : 'مستقل';
   if (ty === 'ممنوح سوبر' && !(region || '').trim()) throw httpError(400, 'حدد منطقة امتياز الممنوح السوبر');
 
-  const id = Date.now();
-  await sql`INSERT INTO clients (id, name, cr, city, st, bal, cr_limit, used, wst, branches, staff, type)
-            VALUES (${id}, ${n}, ${c}, ${(city || '').trim() || '—'}, 'ok', 0, 20000, 0, 'ok', '[]', '[]', ${ty})`;
+  const id = await newClient({ name: n, cr: c, city: (city || '').trim() || '—', type: ty });
   if (ty !== 'مستقل' && ty !== 'مانح') {
-    await sql`INSERT INTO frs (id, name, city, cr, st, active, parent, super, region)
+    // granterId = عميل المانح الذي اختير في نافذة الإنشاء
+    await sql`INSERT INTO frs (id, name, city, cr, st, active, super, region, client_id, granter_id)
               VALUES (${id}, ${n}, ${(city || '').trim() || '—'}, ${c}, 'new', true,
-                      ${ty === 'ممنوح بيسك' ? Number(granterId) || null : null},
-                      ${ty === 'ممنوح سوبر'}, ${ty === 'ممنوح سوبر' ? (region || '').trim() : null})`;
+                      ${ty === 'ممنوح سوبر'}, ${ty === 'ممنوح سوبر' ? (region || '').trim() : null}, ${id}, ${Number(granterId) || null})`;
   }
-  return `أُنشئ العميل «${n}» من نوع ${ty} — يظهر في قائمة العملاء فورًا`;
+  return `أُنشئ العميل «${n}» من نوع ${ty} — أنشئ حساب مدير المنشأة من ملفه ليستطيع الدخول`;
 }
 
 // ============ كتالوج العميل الخاص (أسعار متفق عليها) ============
@@ -595,18 +730,19 @@ async function clientsCreate(role, { name, cr, city, type, granterId, region }) 
 /** خصم الاتفاق الافتراضي عند إضافة منتج لكتالوج عميل */
 const AGREEMENT_DISC = 0.05;
 
-async function clientsProdAdd(role, { id, pid }) {
-  if (role !== 'b2b') throw httpError(403, 'كتالوج العملاء صلاحية B2B');
+async function clientsProdAdd(ctx, { id, pid }) {
+  if (!isB2B(ctx)) throw httpError(403, 'كتالوج العملاء صلاحية B2B');
   const [p] = await sql`SELECT name, price::float FROM products WHERE id = ${pid}`;
   if (!p) throw httpError(404, 'المنتج غير موجود');
+  await clientRow(id);
   const price = Math.round(p.price * (1 - AGREEMENT_DISC) * 100) / 100;
   await sql`INSERT INTO client_products (client_id, pid, price) VALUES (${id}, ${pid}, ${price})
             ON CONFLICT (client_id, pid) DO NOTHING`;
   return `أُضيف «${p.name}» لكتالوج العميل بسعر اتفاق ${fmt(price)} ر.س (خصم ٥٪)`;
 }
 
-async function clientsProdStep(role, { id, pid, delta }) {
-  if (role !== 'b2b') throw httpError(403, 'كتالوج العملاء صلاحية B2B');
+async function clientsProdStep(ctx, { id, pid, delta }) {
+  if (!isB2B(ctx)) throw httpError(403, 'كتالوج العملاء صلاحية B2B');
   const d = Number(delta) > 0 ? 0.5 : -0.5;
   const [row] = await sql`UPDATE client_products SET price = GREATEST(0.5, price + ${d})
                           WHERE client_id = ${id} AND pid = ${pid} RETURNING price::float`;
@@ -614,32 +750,31 @@ async function clientsProdStep(role, { id, pid, delta }) {
   return `سعر العميل الخاص الآن ${fmt(row.price)} ر.س`;
 }
 
-async function clientsProdDel(role, { id, pid }) {
-  if (role !== 'b2b') throw httpError(403, 'كتالوج العملاء صلاحية B2B');
+async function clientsProdDel(ctx, { id, pid }) {
+  if (!isB2B(ctx)) throw httpError(403, 'كتالوج العملاء صلاحية B2B');
   await sql`DELETE FROM client_products WHERE client_id = ${id} AND pid = ${pid}`;
   return 'حُذف المنتج من كتالوج العميل — يعود لسعر الكتالوج الأساسي';
 }
 
 // ============ العملاء الجدد (طلبات «سجّل منشأتك») ============
 
-async function ncApprove(role, { id }) {
-  if (role !== 'b2b') throw httpError(403, 'اعتماد المنشآت الجديدة صلاحية B2B');
+async function ncApprove(ctx, { id }) {
+  if (!isB2B(ctx)) throw httpError(403, 'اعتماد المنشآت الجديدة صلاحية B2B');
   const [r] = await sql`SELECT * FROM new_clients WHERE id = ${id}`;
   if (!r) throw httpError(404, 'طلب التسجيل غير موجود');
   if (r.st !== 'pend') throw httpError(400, 'الطلب ليس قيد المراجعة');
   const ty = CLIENT_TYPES.includes(r.model) ? r.model : 'مستقل';
-  const cid = Date.now();
-  await sql`INSERT INTO clients (id, name, cr, city, st, bal, cr_limit, used, wst, branches, staff, type)
-            VALUES (${cid}, ${r.name}, ${r.cr || `CR-${id}`}, ${r.city || '—'}, 'ok', 0, 20000, 0, 'ok', '[]', '[]', ${ty})`;
+  const cid = await newClient({ name: r.name, cr: r.cr || `CR-${id}`, city: r.city || '—', type: ty });
   await sql`UPDATE new_clients SET st = 'ok', client_id = ${cid} WHERE id = ${id}`;
   await notify(['b2b'], 'اعتمادات', `اعتُمدت منشأة «${r.name}» (${id}) وأُنشئ حسابها كعميل ${ty}`);
-  return `اعتُمدت «${r.name}» — أُنشئ حساب العميل وحدّه الائتماني الافتتاحي 20,000 ر.س`;
+  return `اعتُمدت «${r.name}» — أُنشئ حساب العميل وحدّه الائتماني الافتتاحي 20,000 ر.س؛ أنشئ حساب مديرها من ملف العميل`;
 }
 
-async function ncReject(role, { id }) {
-  if (role !== 'b2b') throw httpError(403, 'رفض المنشآت الجديدة صلاحية B2B');
-  const [r] = await sql`SELECT name FROM new_clients WHERE id = ${id}`;
+async function ncReject(ctx, { id }) {
+  if (!isB2B(ctx)) throw httpError(403, 'رفض المنشآت الجديدة صلاحية B2B');
+  const [r] = await sql`SELECT name, st FROM new_clients WHERE id = ${id}`;
   if (!r) throw httpError(404, 'طلب التسجيل غير موجود');
+  if (r.st !== 'pend') throw httpError(400, 'الطلب ليس قيد المراجعة');
   await sql`UPDATE new_clients SET st = 'no' WHERE id = ${id}`;
   return `رُفض طلب تسجيل «${r.name}» — أُشعر مسؤول الحساب`;
 }
@@ -654,8 +789,8 @@ async function rmDraftRow() {
   return d;
 }
 
-async function rolesSet(role, { row, col }) {
-  if (role !== 'b2b') throw httpError(403, 'تعديل مصفوفة الصلاحيات صلاحية B2B');
+async function rolesSet(ctx, { row, col }) {
+  if (!isB2B(ctx)) throw httpError(403, 'تعديل مصفوفة الصلاحيات صلاحية B2B');
   const r = Number(row), c = Number(col);
   if (!(r >= 0 && r < 4 && c >= 0 && c < 8)) throw httpError(400, 'خلية غير صالحة');
   let draft = await rmDraftRow();
@@ -674,8 +809,8 @@ async function rolesSet(role, { row, col }) {
   return 'عُدّلت الخلية في المسودة — انشر الإصدار ليسري على الحسابات';
 }
 
-async function rolesPublish(role, { note }) {
-  if (role !== 'b2b') throw httpError(403, 'نشر الإصدارات صلاحية B2B');
+async function rolesPublish(ctx, { note }) {
+  if (!isB2B(ctx)) throw httpError(403, 'نشر الإصدارات صلاحية B2B');
   const draft = await rmDraftRow();
   if (!draft) throw httpError(400, 'لا توجد مسودة للنشر — عدّل خلية أولًا');
   await sql`UPDATE roles_matrix SET cur = false WHERE cur = true`;
@@ -686,8 +821,8 @@ async function rolesPublish(role, { note }) {
   return `نُشر الإصدار v${draft.ver} — سرت الصلاحيات على كل الحسابات`;
 }
 
-async function rolesDiscard(role) {
-  if (role !== 'b2b') throw httpError(403, 'إدارة المسودات صلاحية B2B');
+async function rolesDiscard(ctx) {
+  if (!isB2B(ctx)) throw httpError(403, 'إدارة المسودات صلاحية B2B');
   await sql`DELETE FROM roles_matrix WHERE draft = true`;
   return 'أُهملت المسودة — عاد الإصدار المنشور كما هو';
 }
@@ -697,9 +832,10 @@ async function rolesDiscard(role) {
 const COL_STAGES = ['تواصل ودي', 'مطالبة رسمية', 'إنذار نهائي', 'تجميد الائتمان', 'إحالة قانونية'];
 const FINREQ_ROLES = ['owner', 'fin', 'frz', 'frzs'];
 
-async function getColFile(id) {
+/** ملف تحصيل ضمن نطاق الجلسة (ملف منشأتي، أو أي ملف لـ B2B) */
+async function getColFile(ctx, id) {
   const [f] = await sql`SELECT * FROM col_files WHERE id = ${id}`;
-  if (!f) throw httpError(404, 'ملف التحصيل غير موجود');
+  if (!f || (!isB2B(ctx) && Number(f.client_id) !== ctx.clientId)) throw httpError(404, 'ملف التحصيل غير موجود');
   return f;
 }
 
@@ -707,31 +843,26 @@ function colLog(f, txt) {
   return [...(f.log || []), { t: txt, d: `اليوم ${nowLabel()}` }];
 }
 
-async function clientNameOf(cid) {
-  const [c] = await sql`SELECT name FROM clients WHERE id = ${cid}`;
-  return c ? c.name : `عميل ${cid}`;
-}
-
 /** العميل يطلب أجل سداد بمبلغ ومدة */
-async function finreqsAjel(role, { amt, months, note }) {
-  if (!FINREQ_ROLES.includes(role)) throw httpError(403, 'طلب الأجل لمدير حساب المنشأة أو ماليتها');
+async function finreqsAjel(ctx, { amt, months, note }) {
+  if (!FINREQ_ROLES.includes(ctx.role)) throw httpError(403, 'طلب الأجل لمدير حساب المنشأة أو ماليتها');
   const amount = Math.floor(Number(amt));
   const m = Math.floor(Number(months));
   if (!(amount >= 1000 && amount <= 5_000_000)) throw httpError(400, 'أدخل مبلغ أجل صالحًا (1,000 ر.س فأكثر)');
   if (![1, 2, 3].includes(m)) throw httpError(400, 'اختر مدة الأجل: شهر أو شهران أو ثلاثة');
-  const cid = sessionClientId(role);
+  const cid = myClient(ctx);
   const seq = await nextSeq('frq');
   const id = `FRQ-${seq}`;
   await sql`INSERT INTO fin_reqs (id, client_id, kind, amt, months, note, st)
             VALUES (${id}, ${cid}, 'ajel', ${amount}, ${m}, ${(note || '').trim()}, 'pend')`;
-  await notify(['b2b'], 'مالية', `طلب أجل ${id} — ${fmt0(amount)} ر.س لمدة ${m === 1 ? 'شهر' : m === 2 ? 'شهرين' : '3 أشهر'} من ${await clientNameOf(cid)}`);
+  await notify(['b2b'], 'مالية', `طلب أجل ${id} — ${fmt0(amount)} ر.س لمدة ${m === 1 ? 'شهر' : m === 2 ? 'شهرين' : '3 أشهر'} من ${ctx.org}`);
   return `أُرسل طلب الأجل ${id} لفريق B2B — عند الموافقة يُفتح دين آجل باستحقاق محدد`;
 }
 
 /** العميل يطلب مهلة/تأجيل سداد على ملف تحصيل قائم */
-async function finreqsDelay(role, { fileId, date, note }) {
-  if (!FINREQ_ROLES.includes(role)) throw httpError(403, 'طلب المهلة لمدير حساب المنشأة أو ماليتها');
-  const f = await getColFile(fileId);
+async function finreqsDelay(ctx, { fileId, date, note }) {
+  if (!FINREQ_ROLES.includes(ctx.role)) throw httpError(403, 'طلب المهلة لمدير حساب المنشأة أو ماليتها');
+  const f = await getColFile(ctx, fileId);
   if (f.st !== 'open') throw httpError(400, 'الملف مغلق — لا مهل عليه');
   if ((f.due_hist || []).length >= 5) throw httpError(400, 'استُنفدت الجدولة (5/5) — لا يمكن طلب مهلة إضافية');
   const d = (date || '').trim();
@@ -746,9 +877,9 @@ async function finreqsDelay(role, { fileId, date, note }) {
 }
 
 /** العميل يسجل وعد سداد بتاريخ — يُقيد فورًا ويُراقب */
-async function finreqsPromise(role, { fileId, date, amt }) {
-  if (!FINREQ_ROLES.includes(role)) throw httpError(403, 'وعد السداد لمدير حساب المنشأة أو ماليتها');
-  const f = await getColFile(fileId);
+async function finreqsPromise(ctx, { fileId, date, amt }) {
+  if (!FINREQ_ROLES.includes(ctx.role)) throw httpError(403, 'وعد السداد لمدير حساب المنشأة أو ماليتها');
+  const f = await getColFile(ctx, fileId);
   if (f.st !== 'open') throw httpError(400, 'الملف مغلق');
   const d = (date || '').trim();
   const amount = Math.floor(Number(amt));
@@ -765,12 +896,13 @@ async function finreqsPromise(role, { fileId, date, amt }) {
 }
 
 /** B2B يقرر طلبات الأجل والمهلة */
-async function finreqsApprove(role, { id }) {
-  if (role !== 'b2b') throw httpError(403, 'قرار الأجل والمهلة صلاحية B2B');
+async function finreqsApprove(ctx, { id }) {
+  if (!isB2B(ctx)) throw httpError(403, 'قرار الأجل والمهلة صلاحية B2B');
   const [r] = await sql`SELECT * FROM fin_reqs WHERE id = ${id}`;
   if (!r) throw httpError(404, 'الطلب غير موجود');
   if (r.st !== 'pend') throw httpError(400, 'الطلب مقرر مسبقًا');
-  const name = await clientNameOf(Number(r.client_id));
+  const cid = Number(r.client_id);
+  const name = await clientNameOf(cid);
 
   if (r.kind === 'ajel') {
     const seq = await nextSeq('col');
@@ -780,51 +912,53 @@ async function finreqsApprove(role, { id }) {
     const due = dueDate.toISOString().slice(0, 10);
     const log = [{ t: `فُتح الدين بموافقة B2B على طلب الأجل ${id} — ${fmt0(Number(r.amt))} ر.س حتى ${due}`, d: `اليوم ${nowLabel()}` }];
     await sql`INSERT INTO col_files (id, client_id, inv, ref, amt, orig_amt, created, due, stage, log)
-              VALUES (${fileId}, ${Number(r.client_id)}, ${`أجل ${id}`}, ${(r.note || '').trim() || 'مشتريات آجلة معتمدة'},
+              VALUES (${fileId}, ${cid}, ${`أجل ${id}`}, ${(r.note || '').trim() || 'مشتريات آجلة معتمدة'},
                       ${Number(r.amt)}, ${Number(r.amt)}, ${new Date().toISOString().slice(0, 10)}, ${due}, 1, ${JSON.stringify(log)})`;
     await sql`UPDATE fin_reqs SET st = 'ok', file_id = ${fileId} WHERE id = ${id}`;
-    await notify(['owner', 'fin', 'frz', 'frzs'], 'مالية', `وافق B2B على طلب الأجل ${id} — فُتح الملف ${fileId} باستحقاق ${due}`);
+    await notify(['owner', 'fin', 'frz', 'frzs'], 'مالية', `وافق B2B على طلب الأجل ${id} — فُتح الملف ${fileId} باستحقاق ${due}`, cid);
     return `اعتُمد الأجل — فُتح ملف الدين ${fileId} لعميل «${name}» باستحقاق ${due}`;
   }
 
   if (r.kind === 'delay') {
-    const f = await getColFile(r.file_id);
+    const f = await getColFile(ctx, r.file_id);
     if ((f.due_hist || []).length >= 5) throw httpError(400, 'استُنفدت الجدولة (5/5) على هذا الملف');
     const hist = [...(f.due_hist || []), { old: f.due, to: r.to_date, why: (r.note || '').trim() || 'مهلة معتمدة من B2B', d: `اليوم ${nowLabel()}` }];
     await sql`UPDATE col_files SET due = ${r.to_date}, late_days = 0, due_hist = ${JSON.stringify(hist)},
               log = ${JSON.stringify(colLog(f, `وافق B2B على المهلة ${id} — الاستحقاق الجديد ${r.to_date} وجُمّد التصعيد حتى حينه`))} WHERE id = ${f.id}`;
     await sql`UPDATE fin_reqs SET st = 'ok' WHERE id = ${id}`;
-    await notify(['owner', 'fin', 'frz', 'frzs'], 'مالية', `وافق B2B على المهلة ${id} — استحقاق ${f.id} أصبح ${r.to_date}`);
+    await notify(['owner', 'fin', 'frz', 'frzs'], 'مالية', `وافق B2B على المهلة ${id} — استحقاق ${f.id} أصبح ${r.to_date}`, cid);
     return `اعتُمدت المهلة — استحقاق ${f.id} الجديد ${r.to_date} (جدولة ${hist.length}/5)`;
   }
   throw httpError(400, 'وعود السداد تُسجل مباشرة ولا تحتاج قرارًا');
 }
 
-async function finreqsReject(role, { id }) {
-  if (role !== 'b2b') throw httpError(403, 'قرار الأجل والمهلة صلاحية B2B');
+async function finreqsReject(ctx, { id }) {
+  if (!isB2B(ctx)) throw httpError(403, 'قرار الأجل والمهلة صلاحية B2B');
   const [r] = await sql`SELECT * FROM fin_reqs WHERE id = ${id}`;
   if (!r) throw httpError(404, 'الطلب غير موجود');
+  if (r.st !== 'pend') throw httpError(400, 'الطلب مقرر مسبقًا');
   await sql`UPDATE fin_reqs SET st = 'no' WHERE id = ${id}`;
-  await notify(['owner', 'fin', 'frz', 'frzs'], 'مالية', `اعتذر B2B عن ${r.kind === 'ajel' ? 'طلب الأجل' : 'طلب المهلة'} ${id} — تواصلوا مع مسؤول حسابكم`);
+  await notify(['owner', 'fin', 'frz', 'frzs'], 'مالية', `اعتذر B2B عن ${r.kind === 'ajel' ? 'طلب الأجل' : 'طلب المهلة'} ${id} — تواصلوا مع مسؤول حسابكم`, Number(r.client_id));
   return `رُفض الطلب ${id} وأُشعر العميل`;
 }
 
 /** تسجيل دفعة على ملف تحصيل — من B2B (تحصيل يدوي) أو من العميل (من محفظته) */
-async function colPay(role, { id, amt, fromWallet }) {
-  const f = await getColFile(id);
+async function colPay(ctx, { id, amt, fromWallet }) {
+  const isClient = FINREQ_ROLES.includes(ctx.role);
+  if (!isClient && !isB2B(ctx)) throw httpError(403, 'لا صلاحية');
+  const f = await getColFile(ctx, id);
+  const cid = Number(f.client_id);
   if (f.st !== 'open') throw httpError(400, 'الملف مغلق مسبقًا');
   const amount = Math.round(Number(amt) * 100) / 100;
   if (!(amount > 0)) throw httpError(400, 'أدخل مبلغ الدفعة');
   if (amount > Number(f.amt)) throw httpError(400, `الدفعة أكبر من المستحق (${fmt(Number(f.amt))} ر.س)`);
-  const isClient = FINREQ_ROLES.includes(role);
-  if (!isClient && role !== 'b2b') throw httpError(403, 'لا صلاحية');
 
   // سداد العميل من محفظته: خصم فعلي من رصيد المحفظة
   if (isClient && fromWallet !== false) {
-    const [w] = await sql`SELECT bal::float FROM wallet WHERE org_cr = ${SAMPLE_CR}`;
-    if (w.bal < amount) throw httpError(400, 'رصيد المحفظة لا يكفي لهذه الدفعة');
-    await sql`UPDATE wallet SET bal = bal - ${amount} WHERE org_cr = ${SAMPLE_CR}`;
-    await sql`INSERT INTO wallet_tx (org_cr, t, d, amt) VALUES (${SAMPLE_CR}, ${`دفعة تحصيل — ملف ${id}`}, 'الآن', ${-amount})`;
+    await assertWalletActive(cid);
+    const w = await walletOf(cid);
+    if (Number(w.bal) < amount) throw httpError(400, 'رصيد المحفظة لا يكفي لهذه الدفعة');
+    await walletMove(cid, -amount, `دفعة تحصيل — ملف ${id}`);
   }
 
   const rem = Math.round((Number(f.amt) - amount) * 100) / 100;
@@ -834,15 +968,18 @@ async function colPay(role, { id, amt, fromWallet }) {
     ? `${who} دفعة ${fmt(amount)} ر.س — سُدد الملف بالكامل وأُغلق ✓`
     : `${who} دفعة ${fmt(amount)} ر.س — المتبقي ${fmt(rem)} ر.س`);
   await sql`UPDATE col_files SET amt = ${Math.max(0, rem)}, st = ${closed ? 'closed' : 'open'},
-            promise = ${closed ? null : f.promise}, log = ${JSON.stringify(log)} WHERE id = ${id}`;
-  if (closed) await notify(['b2b', 'owner', 'fin', 'frz', 'frzs'], 'مالية', `سُدد ملف التحصيل ${id} بالكامل وأُغلق ✓`);
+            promise = ${closed ? null : (f.promise ? JSON.stringify(f.promise) : null)}, log = ${JSON.stringify(log)} WHERE id = ${id}`;
+  if (closed) {
+    await notify(['b2b'], 'مالية', `سُدد ملف التحصيل ${id} بالكامل وأُغلق ✓`);
+    await notify(['owner', 'fin', 'frz', 'frzs'], 'مالية', `سُدد ملف التحصيل ${id} بالكامل وأُغلق ✓`, cid);
+  }
   return closed ? `سُددت الدفعة وأُغلق الملف ${id} بالكامل ✓` : `سُجلت دفعة ${fmt(amount)} ر.س — المتبقي ${fmt(rem)} ر.س`;
 }
 
 /** B2B يسجل وعد سداد متفقًا عليه مع العميل */
-async function colPromise(role, { id, date, amt }) {
-  if (role !== 'b2b') throw httpError(403, 'صلاحية B2B');
-  const f = await getColFile(id);
+async function colPromise(ctx, { id, date, amt }) {
+  if (!isB2B(ctx)) throw httpError(403, 'صلاحية B2B');
+  const f = await getColFile(ctx, id);
   const d = (date || '').trim();
   const amount = Math.floor(Number(amt));
   if (!d || !(amount > 0)) throw httpError(400, 'أدخل تاريخ الوعد ومبلغه');
@@ -851,18 +988,18 @@ async function colPromise(role, { id, date, amt }) {
   return `سُجّل الوعد — يُراقب تلقائيًا ويُصعّد الملف عند الإخلاف`;
 }
 
-async function colRemind(role, { id }) {
-  if (role !== 'b2b') throw httpError(403, 'صلاحية B2B');
-  const f = await getColFile(id);
-  await sql`UPDATE col_files SET log = ${JSON.stringify(colLog(f, 'أُرسل تذكير سداد للعميل (رسالة نصية + إشعار بالتطبيق)'))} WHERE id = ${id}`;
-  await notify(['owner', 'fin', 'frz', 'frzs'], 'مالية', `تذكير سداد — المستحق على الملف ${id}: ${fmt(Number(f.amt))} ر.س`);
+async function colRemind(ctx, { id }) {
+  if (!isB2B(ctx)) throw httpError(403, 'صلاحية B2B');
+  const f = await getColFile(ctx, id);
+  await sql`UPDATE col_files SET log = ${JSON.stringify(colLog(f, 'أُرسل تذكير سداد للعميل (إشعار بالتطبيق)'))} WHERE id = ${id}`;
+  await notify(['owner', 'fin', 'frz', 'frzs'], 'مالية', `تذكير سداد — المستحق على الملف ${id}: ${fmt(Number(f.amt))} ر.س`, Number(f.client_id));
   return 'أُرسل التذكير ووُثّق في سجل الملف';
 }
 
 /** B2B يجدول الاستحقاق (بحد أقصى 5 جدولات) */
-async function colReschedule(role, { id, date, why }) {
-  if (role !== 'b2b') throw httpError(403, 'صلاحية B2B');
-  const f = await getColFile(id);
+async function colReschedule(ctx, { id, date, why }) {
+  if (!isB2B(ctx)) throw httpError(403, 'صلاحية B2B');
+  const f = await getColFile(ctx, id);
   if (f.st !== 'open') throw httpError(400, 'الملف مغلق');
   if ((f.due_hist || []).length >= 5) throw httpError(400, 'استُنفدت الجدولة (5/5) — صعّد الملف أو حصّل الدين');
   const d = (date || '').trim();
@@ -874,9 +1011,9 @@ async function colReschedule(role, { id, date, why }) {
 }
 
 /** تصعيد مرحلة الملف — المرحلة الرابعة تجمّد ائتمان العميل تلقائيًا */
-async function colEscalate(role, { id }) {
-  if (role !== 'b2b') throw httpError(403, 'صلاحية B2B');
-  const f = await getColFile(id);
+async function colEscalate(ctx, { id }) {
+  if (!isB2B(ctx)) throw httpError(403, 'صلاحية B2B');
+  const f = await getColFile(ctx, id);
   if (f.st !== 'open') throw httpError(400, 'الملف مغلق');
   if (f.stage >= 5) throw httpError(400, 'الملف في المرحلة القانونية بالفعل');
   const next = f.stage + 1;
@@ -887,43 +1024,38 @@ async function colEscalate(role, { id }) {
   }
   await sql`UPDATE col_files SET stage = ${next},
             log = ${JSON.stringify(colLog(f, `صُعّد الملف إلى مرحلة «${COL_STAGES[next - 1]}»${extra}`))} WHERE id = ${id}`;
-  await notify(['owner', 'fin', 'frz', 'frzs'], 'مالية', `صُعّد ملف التحصيل ${id} إلى «${COL_STAGES[next - 1]}»${extra}`);
+  await notify(['owner', 'fin', 'frz', 'frzs'], 'مالية', `صُعّد ملف التحصيل ${id} إلى «${COL_STAGES[next - 1]}»${extra}`, Number(f.client_id));
   return `صُعّد الملف إلى «${COL_STAGES[next - 1]}»${extra}`;
 }
 
 /** B2B يعدل الحد الائتماني للعميل (لا يقل عن المستخدم) */
-async function clientsSetLimit(role, { id, limit }) {
-  if (role !== 'b2b') throw httpError(403, 'تعديل الحدود صلاحية B2B');
-  const [c] = await sql`SELECT name, used::float FROM clients WHERE id = ${id}`;
-  if (!c) throw httpError(404, 'العميل غير موجود');
+async function clientsSetLimit(ctx, { id, limit }) {
+  if (!isB2B(ctx)) throw httpError(403, 'تعديل الحدود صلاحية B2B');
+  const c = await clientRow(id);
   const l = Math.floor(Number(limit));
   if (!(l > 0)) throw httpError(400, 'أدخل حدًا صالحًا');
-  if (l < c.used) throw httpError(400, `لا يقبل حدًا أقل من المستخدم (${fmt0(c.used)} ر.س)`);
+  if (l < Number(c.used)) throw httpError(400, `لا يقبل حدًا أقل من المستخدم (${fmt0(Number(c.used))} ر.س)`);
+  await walletOf(Number(id));
   await sql`UPDATE clients SET cr_limit = ${l} WHERE id = ${id}`;
-  if (Number(id) === 1) await sql`UPDATE wallet SET cr_limit = ${l} WHERE org_cr = ${SAMPLE_CR}`;
+  await sql`UPDATE wallet SET cr_limit = ${l} WHERE client_id = ${id}`;
   return `حُدّث الحد الائتماني لـ «${c.name}» إلى ${fmt0(l)} ر.س — يسري فورًا`;
 }
 
 /** B2B يشحن محفظة عميل مباشرة (قيد دفعة مستلمة خارج المنصة) */
-async function clientsTopup(role, { id, amt }) {
-  if (role !== 'b2b') throw httpError(403, 'شحن محافظ العملاء صلاحية B2B');
-  const [c] = await sql`SELECT name FROM clients WHERE id = ${id}`;
-  if (!c) throw httpError(404, 'العميل غير موجود');
+async function clientsTopup(ctx, { id, amt }) {
+  if (!isB2B(ctx)) throw httpError(403, 'شحن محافظ العملاء صلاحية B2B');
+  const c = await clientRow(id);
   const amount = Math.floor(Number(amt));
   if (!(amount >= 100 && amount <= 5_000_000)) throw httpError(400, 'أدخل مبلغًا صالحًا (100 ر.س فأكثر)');
-  await sql`UPDATE clients SET bal = bal + ${amount} WHERE id = ${id}`;
-  if (Number(id) === 1) {
-    await sql`UPDATE wallet SET bal = bal + ${amount} WHERE org_cr = ${SAMPLE_CR}`;
-    await sql`INSERT INTO wallet_tx (org_cr, t, d, amt) VALUES (${SAMPLE_CR}, ${'شحن المحفظة — قيد مباشر من B2B'}, 'الآن', ${amount})`;
-  }
-  await notify(['owner', 'fin', 'frz', 'frzs'], 'مالية', `أضاف B2B ${fmt0(amount)} ر.س لمحفظة ${c.name} — قيد مباشر`);
+  await walletMove(Number(id), amount, 'شحن المحفظة — قيد مباشر من B2B');
+  await notify(['owner', 'fin', 'frz', 'frzs', 'fr'], 'مالية', `أضاف B2B ${fmt0(amount)} ر.س لمحفظة ${c.name} — قيد مباشر`, Number(id));
   return `أُضيفت ${fmt0(amount)} ر.س لمحفظة «${c.name}» فورًا`;
 }
 
-// ============ الكتالوج والمستخدمون والفروع ============
+// ============ الكتالوج ============
 
-async function productsSetPrice(role, { pid, delta }) {
-  if (role !== 'b2b') throw httpError(403, 'تسعير الكتالوج صلاحية B2B');
+async function productsSetPrice(ctx, { pid, delta }) {
+  if (!isB2B(ctx)) throw httpError(403, 'تسعير الكتالوج صلاحية B2B');
   const d = Number(delta) > 0 ? 0.5 : -0.5;
   const [p] = await sql`UPDATE products SET price = GREATEST(0.5, price + ${d})
                         WHERE id = ${pid} RETURNING name, price::float`;
@@ -932,8 +1064,8 @@ async function productsSetPrice(role, { pid, delta }) {
 }
 
 /** v6: كتابة السعر الأساسي مباشرة (حقل الإدخال في إدارة الكتالوج) */
-async function productsSetPriceVal(role, { pid, price }) {
-  if (role !== 'b2b') throw httpError(403, 'تسعير الكتالوج صلاحية B2B');
+async function productsSetPriceVal(ctx, { pid, price }) {
+  if (!isB2B(ctx)) throw httpError(403, 'تسعير الكتالوج صلاحية B2B');
   const p = Math.round(Number(price) * 100) / 100;
   if (!(p > 0 && p <= 100000)) throw httpError(400, 'أدخل سعرًا صالحًا');
   const [row] = await sql`UPDATE products SET price = ${p} WHERE id = ${pid} RETURNING name`;
@@ -942,8 +1074,8 @@ async function productsSetPriceVal(role, { pid, price }) {
 }
 
 /** v6: إضافة / تغيير صورة المنتج (رابط صورة) */
-async function productsSetImg(role, { pid, img }) {
-  if (role !== 'b2b') throw httpError(403, 'إدارة الكتالوج صلاحية B2B');
+async function productsSetImg(ctx, { pid, img }) {
+  if (!isB2B(ctx)) throw httpError(403, 'إدارة الكتالوج صلاحية B2B');
   const url = String(img || '').trim();
   if (!/^https:\/\/.+/.test(url) || url.length > 500) throw httpError(400, 'ألصق رابط صورة صحيحًا يبدأ بـ https://');
   const [row] = await sql`UPDATE products SET img = ${url} WHERE id = ${pid} RETURNING name`;
@@ -951,15 +1083,15 @@ async function productsSetImg(role, { pid, img }) {
   return `حُدّثت صورة «${row.name}» — تظهر فورًا في كتالوج كل العملاء`;
 }
 
-async function productsDelImg(role, { pid }) {
-  if (role !== 'b2b') throw httpError(403, 'إدارة الكتالوج صلاحية B2B');
+async function productsDelImg(ctx, { pid }) {
+  if (!isB2B(ctx)) throw httpError(403, 'إدارة الكتالوج صلاحية B2B');
   const [row] = await sql`UPDATE products SET img = '' WHERE id = ${pid} RETURNING name`;
   if (!row) throw httpError(404, 'المنتج غير موجود');
   return `أُزيلت صورة «${row.name}» — تظهر خلفيته اللونية الاحتياطية`;
 }
 
-async function productsAdd(role, { name, unit, price, cat }) {
-  if (role !== 'b2b') throw httpError(403, 'إدارة الكتالوج صلاحية B2B');
+async function productsAdd(ctx, { name, unit, price, cat }) {
+  if (!isB2B(ctx)) throw httpError(403, 'إدارة الكتالوج صلاحية B2B');
   const n = (name || '').trim();
   const p = Number(price);
   if (!n) throw httpError(400, 'اكتب اسم المنتج أولًا');
@@ -971,8 +1103,8 @@ async function productsAdd(role, { name, unit, price, cat }) {
   return `أُضيف «${n}» للكتالوج الأساسي (${pid}) بسعر ${fmt(p)} ر.س`;
 }
 
-async function productsDelete(role, { pid }) {
-  if (role !== 'b2b') throw httpError(403, 'إدارة الكتالوج صلاحية B2B');
+async function productsDelete(ctx, { pid }) {
+  if (!isB2B(ctx)) throw httpError(403, 'إدارة الكتالوج صلاحية B2B');
   const [p] = await sql`SELECT name FROM products WHERE id = ${pid}`;
   if (!p) throw httpError(404, 'المنتج غير موجود');
   await sql`DELETE FROM products WHERE id = ${pid}`;
@@ -980,70 +1112,174 @@ async function productsDelete(role, { pid }) {
   return `حُذف «${p.name}» نهائيًا من الكتالوج ومن كتالوجات العملاء الخاصة`;
 }
 
-async function productsToggle(role, { pid }) {
-  if (role !== 'b2b') throw httpError(403, 'إدارة الكتالوج صلاحية B2B');
+async function productsToggle(ctx, { pid }) {
+  if (!isB2B(ctx)) throw httpError(403, 'إدارة الكتالوج صلاحية B2B');
   const [p] = await sql`SELECT name, is_out FROM products WHERE id = ${pid}`;
   if (!p) throw httpError(404, 'المنتج غير موجود');
   await sql`UPDATE products SET is_out = ${!p.is_out} WHERE id = ${pid}`;
   return p.is_out ? `عاد «${p.name}» للتوفر` : `أُوقف «${p.name}» مؤقتًا — يختفي من كتالوج العملاء`;
 }
 
-async function usersAdd(role, { name, email, userRole, branches }) {
-  if (!['ops', 'owner', 'fr', 'frz', 'frzs', 'b2b'].includes(role)) throw httpError(403, 'لا صلاحية');
-  const n = (name || '').trim();
-  if (!n) throw httpError(400, 'اكتب اسم المستخدم أولًا');
-  if (!(email || '').includes('@')) throw httpError(400, 'أدخل إيميلًا صحيحًا');
-  if (!Array.isArray(branches) || !branches.length) throw httpError(400, 'حدد فرعًا واحدًا على الأقل');
-  const finalRole = role === 'ops' ? 'worker' : (['worker', 'ops', 'fin'].includes(userRole) ? userRole : 'worker');
-  await sql`INSERT INTO org_users (id, name, email, role, branch, st)
-            VALUES (${Date.now()}, ${n}, ${email.trim()}, ${finalRole}, ${branches.join(' · ')}, 'pend')`;
-  return `أُنشئ حساب ${n} — فعّله ليستطيع الدخول بالإيميل وكلمة السر`;
+// ============ الحسابات (جوال + رمز سري) ============
+
+const USER_MANAGERS = ['ops', 'owner', 'fr', 'frz', 'frzs', 'b2b'];
+/** دور مدير حساب المنشأة حسب نوعها */
+const MANAGER_ROLE = { 'مستقل': 'owner', 'مانح': 'fr', 'ممنوح بيسك': 'frz', 'ممنوح سوبر': 'frzs' };
+
+/** منشأة الهدف لأمر حسابات: منشأتي، أو عميل من ملفه (B2B، أو المانح/السوبر لشبكته) */
+async function targetClient(ctx, clientId) {
+  if (clientId == null || clientId === '') return ctx.clientId; // null لفريق B2B
+  return assertClientAccess(ctx, clientId, { network: true });
 }
 
-async function usersSetStatus(role, { id, st }) {
-  if (!['ops', 'owner', 'fr', 'frz', 'frzs', 'b2b'].includes(role)) throw httpError(403, 'لا صلاحية');
-  if (!['ok', 'off'].includes(st)) throw httpError(400, 'حالة غير صالحة');
-  const [u] = await sql`SELECT name, role FROM org_users WHERE id = ${id}`;
+/** حساب ضمن نطاق من يديره */
+async function managedUser(ctx, id) {
+  const [u] = await sql`SELECT * FROM org_users WHERE id = ${id}`;
   if (!u) throw httpError(404, 'المستخدم غير موجود');
-  if (role === 'ops' && u.role !== 'worker') throw httpError(403, 'صلاحيتك تتيح إدارة حسابات العمال فقط');
+  const cid = u.client_id == null ? null : Number(u.client_id);
+  const mine = cid === ctx.clientId;
+  if (!isB2B(ctx) && !mine && !(cid != null && await inNetwork(ctx, cid))) throw httpError(404, 'المستخدم غير موجود');
+  if (ctx.role === 'ops' && u.role !== 'worker') throw httpError(403, 'صلاحيتك تتيح إدارة حسابات العمال فقط');
+  // مدير الحساب لا يديره من هم دونه: حسابات المدراء لـ B2B (أو لمانح الشبكة)
+  if (!isB2B(ctx) && mine && ['owner', 'fr', 'frz', 'frzs'].includes(u.role) && Number(u.id) !== ctx.userId) {
+    throw httpError(403, 'حساب مدير المنشأة يُدار من B2B');
+  }
+  return u;
+}
+
+async function usersAdd(ctx, { name, phone, pin, email, userRole, branches, clientId }) {
+  if (!USER_MANAGERS.includes(ctx.role)) throw httpError(403, 'لا صلاحية');
+  const n = (name || '').trim();
+  if (!n) throw httpError(400, 'اكتب اسم المستخدم أولًا');
+  const p = normPhone(phone);
+  if (!validPhone(p)) throw httpError(400, 'أدخل رقم جوال المستخدم (05xxxxxxxx) — به يسجّل الدخول');
+  assertPin(pin);
+  const cid = await targetClient(ctx, clientId);
+  const fromProfile = cid !== ctx.clientId; // B2B أو الشبكة من ملف العميل
+  const mail = (email || '').trim();
+  if (mail && !mail.includes('@')) throw httpError(400, 'أدخل إيميلًا صحيحًا أو اتركه فارغًا');
+
+  let finalRole;
+  if (cid == null) {
+    finalRole = 'b2b'; // فريق B2B — ينشئه B2B فقط (ctx.clientId null)
+  } else if (userRole === 'mgr') {
+    if (!isB2B(ctx)) throw httpError(403, 'حساب مدير المنشأة ينشئه B2B');
+    finalRole = MANAGER_ROLE[(await clientRow(cid)).type] || 'owner';
+  } else {
+    finalRole = ctx.role === 'ops' ? 'worker' : (['worker', 'ops', 'fin'].includes(userRole) ? userRole : 'worker');
+  }
+  let branch = 'الإدارة';
+  if (cid != null && Array.isArray(branches) && branches.length) branch = branches.map((b) => String(b).trim()).filter(Boolean).slice(0, 20).join(' · ');
+  else if (cid != null && ['worker', 'ops'].includes(finalRole)) {
+    if (!fromProfile) throw httpError(400, 'حدد فرعًا واحدًا على الأقل');
+    const [b] = await sql`SELECT name FROM branches WHERE client_id = ${cid} ORDER BY name LIMIT 1`;
+    branch = b ? b.name : 'الإدارة';
+  }
+  const [dup] = await sql`SELECT 1 AS x FROM org_users WHERE phone = ${p}`;
+  if (dup) throw httpError(409, 'هذا الجوال مسجّل لحساب آخر');
+  // حساب تنشئه المنشأة لنفسها يبدأ «بانتظار التفعيل»؛ وما يُنشأ من ملف العميل فعّال فورًا
+  const st = fromProfile || isB2B(ctx) ? 'ok' : 'pend';
+  await sql`INSERT INTO org_users (id, name, email, role, branch, st, client_id, phone, pin_hash, must_change_pin)
+            VALUES (${Date.now()}, ${n.slice(0, 80)}, ${mail || null}, ${finalRole}, ${branch}, ${st}, ${cid}, ${p}, ${hashPin(pin)}, true)`;
+  return st === 'ok'
+    ? `أُنشئ حساب ${n} — يدخل بجواله ${p} والرمز المؤقت، ويُطلب منه تغييره عند أول دخول`
+    : `أُنشئ حساب ${n} — فعّله ليستطيع الدخول بجواله ${p} والرمز المؤقت`;
+}
+
+async function usersSetStatus(ctx, { id, st }) {
+  if (!USER_MANAGERS.includes(ctx.role)) throw httpError(403, 'لا صلاحية');
+  if (!['ok', 'off'].includes(st)) throw httpError(400, 'حالة غير صالحة');
+  const u = await managedUser(ctx, id);
+  if (Number(u.id) === ctx.userId) throw httpError(400, 'لا يمكنك إيقاف حسابك');
+  if (st === 'ok' && !u.pin_hash) throw httpError(400, 'عيّن رمزًا سريًا للحساب أولًا (إعادة تعيين الرمز)');
   await sql`UPDATE org_users SET st = ${st} WHERE id = ${id}`;
+  if (st === 'off') await sql`DELETE FROM sessions WHERE user_id = ${id}`;
   return st === 'ok' ? `فُعّل حساب ${u.name}` : `أُوقف ${u.name} — لا يستطيع الدخول`;
 }
 
-async function usersUpdate(role, { id, userRole, branches }) {
-  if (!['ops', 'owner', 'fr', 'frz', 'frzs', 'b2b'].includes(role)) throw httpError(403, 'لا صلاحية');
+async function usersUpdate(ctx, { id, userRole, branches }) {
+  if (!USER_MANAGERS.includes(ctx.role)) throw httpError(403, 'لا صلاحية');
   if (!Array.isArray(branches) || !branches.length) throw httpError(400, 'حدد فرعًا واحدًا على الأقل');
-  const [u] = await sql`SELECT name, role FROM org_users WHERE id = ${id}`;
-  if (!u) throw httpError(404, 'المستخدم غير موجود');
-  if (role === 'ops' && u.role !== 'worker') throw httpError(403, 'صلاحيتك تتيح إدارة حسابات العمال فقط');
-  const finalRole = ['worker', 'ops', 'fin'].includes(userRole) ? userRole : u.role;
-  await sql`UPDATE org_users SET role = ${finalRole}, branch = ${branches.join(' · ')} WHERE id = ${id}`;
+  const u = await managedUser(ctx, id);
+  // أدوار الفريق فقط تتبدل هنا؛ حسابات المدراء و B2B تبقى على دورها
+  const staff = ['worker', 'ops', 'fin'];
+  const finalRole = staff.includes(u.role) && staff.includes(userRole) && ctx.role !== 'ops' ? userRole : u.role;
+  await sql`UPDATE org_users SET role = ${finalRole}, branch = ${branches.map((b) => String(b).trim()).filter(Boolean).slice(0, 20).join(' · ')} WHERE id = ${id}`;
   return `حُدّثت صلاحيات ${u.name} — الدور والفروع سرت فورًا`;
 }
 
-async function branchesAdd(role, { name, loc }) {
-  if (!['owner', 'fr', 'frz', 'frzs', 'b2b'].includes(role)) throw httpError(403, 'لا صلاحية');
+/** رمز مؤقت جديد لحساب (نسي رمزه أو قُفل): يُلغي جلساته ويفك القفل ويُلزمه بتغييره عند الدخول */
+async function usersResetPin(ctx, { id, pin }) {
+  if (!USER_MANAGERS.includes(ctx.role)) throw httpError(403, 'لا صلاحية');
+  assertPin(pin);
+  const u = await managedUser(ctx, id);
+  if (Number(u.id) === ctx.userId) throw httpError(400, 'غيّر رمزك من «تغيير الرمز السري»');
+  if (!u.phone) throw httpError(400, 'أضف رقم جوال للحساب أولًا');
+  await sql`UPDATE org_users SET pin_hash = ${hashPin(pin)}, must_change_pin = true WHERE id = ${id}`;
+  await sql`DELETE FROM sessions WHERE user_id = ${id}`;
+  await sql`DELETE FROM login_throttle WHERE key = ${`p:${u.phone}`}`;
+  return `عُيّن رمز مؤقت لـ ${u.name} وفُكّ قفل حسابه — يُطلب منه تغييره عند أول دخول`;
+}
+
+/** جوال حساب قديم بلا جوال (أو تصحيحه) */
+async function usersSetPhone(ctx, { id, phone }) {
+  if (!USER_MANAGERS.includes(ctx.role)) throw httpError(403, 'لا صلاحية');
+  const p = normPhone(phone);
+  if (!validPhone(p)) throw httpError(400, 'أدخل رقم جوال صحيحًا (05xxxxxxxx)');
+  const u = await managedUser(ctx, id);
+  const [dup] = await sql`SELECT 1 AS x FROM org_users WHERE phone = ${p} AND id <> ${id}`;
+  if (dup) throw httpError(409, 'هذا الجوال مسجّل لحساب آخر');
+  await sql`UPDATE org_users SET phone = ${p} WHERE id = ${id}`;
+  await sql`DELETE FROM sessions WHERE user_id = ${id}`;
+  return `حُدّث جوال ${u.name} إلى ${p}`;
+}
+
+// ============ الفروع (لكل منشأة) ============
+
+const BRANCH_MANAGERS = ['owner', 'fr', 'frz', 'frzs'];
+
+async function branchesAdd(ctx, { name, loc }) {
+  if (!BRANCH_MANAGERS.includes(ctx.role)) throw httpError(403, isB2B(ctx) ? 'فروع العملاء تُدار من ملف العميل' : 'لا صلاحية');
+  const cid = myClient(ctx);
   const n = (name || '').trim();
   if (!n) throw httpError(400, 'اكتب اسم الفرع أولًا');
   if (!loc || typeof loc.x !== 'number' || !loc.addr) throw httpError(400, 'حدد موقع الفرع على الخريطة أولًا — الموقع إلزامي');
-  await sql`INSERT INTO branches (name, city, st, loc) VALUES (${n}, 'الرياض', 'ok', ${JSON.stringify(loc)})
-            ON CONFLICT (name) DO NOTHING`;
+  const c = await clientRow(cid);
+  const ins = await sql`INSERT INTO branches (client_id, name, city, st, loc) VALUES (${cid}, ${n.slice(0, 80)}, ${c.city || 'الرياض'}, 'ok', ${JSON.stringify(loc)})
+                        ON CONFLICT (client_id, name) DO NOTHING RETURNING name`;
+  if (!ins.length) throw httpError(409, 'يوجد فرع بهذا الاسم');
   return 'أُضيف الفرع بموقعه — اربط به المستخدمين من جدول الفريق';
 }
 
-async function branchesToggle(role, { name }) {
-  if (!['owner', 'fr', 'frz', 'frzs', 'b2b'].includes(role)) throw httpError(403, 'لا صلاحية');
-  const [b] = await sql`SELECT st FROM branches WHERE name = ${name}`;
+async function branchesToggle(ctx, { name }) {
+  if (!BRANCH_MANAGERS.includes(ctx.role)) throw httpError(403, 'لا صلاحية');
+  const cid = myClient(ctx);
+  const [b] = await sql`SELECT st FROM branches WHERE client_id = ${cid} AND name = ${name}`;
   if (!b) throw httpError(404, 'الفرع غير موجود');
   const off = b.st === 'off';
-  await sql`UPDATE branches SET st = ${off ? 'ok' : 'off'} WHERE name = ${name}`;
+  await sql`UPDATE branches SET st = ${off ? 'ok' : 'off'} WHERE client_id = ${cid} AND name = ${name}`;
   return off ? `أُعيد تفعيل ${name} — يستطيع الطلب من جديد` : `أُوقف ${name} مؤقتًا — لن تُقبل طلبات جديدة منه`;
 }
 
-async function branchesDelete(role, { name }) {
-  if (!['owner', 'fr', 'frz', 'frzs', 'b2b'].includes(role)) throw httpError(403, 'لا صلاحية');
-  await sql`DELETE FROM branches WHERE name = ${name}`;
+async function branchesDelete(ctx, { name }) {
+  if (!BRANCH_MANAGERS.includes(ctx.role)) throw httpError(403, 'لا صلاحية');
+  const cid = myClient(ctx);
+  const gone = await sql`DELETE FROM branches WHERE client_id = ${cid} AND name = ${name} RETURNING name`;
+  if (!gone.length) throw httpError(404, 'الفرع غير موجود');
   return `حُذف ${name} نهائيًا — طلباته السابقة باقية في السجل`;
+}
+
+// ============ التكامل مع نظام العمليات ============
+
+/** B2B: دورة تكامل يدوية — يرسل العملاء/الأصناف المتغيرة والأحداث المتأخرة ويحدّث المتاح للبيع */
+async function integrationSync(ctx) {
+  if (!isB2B(ctx)) throw httpError(403, 'التكامل صلاحية B2B');
+  if (!integrationOn()) throw httpError(400, 'التكامل مع نظام العمليات غير مفعّل على هذه البيئة');
+  const { runCycle } = await import('./integration.js');
+  const r = await runCycle();
+  return `مزامنة العمليات: ${r.master.customers} عميل و${r.master.products} صنف تغيّروا، أُرسل ${r.delivered.sent} حدث`
+    + (r.delivered.failed || r.delivered.dead ? ` (تعثّر ${r.delivered.failed + r.delivered.dead})` : '')
+    + (r.stock.error ? ` — تعذّر تحديث المتاح: ${r.stock.error}` : ` — حُدّث المتاح لـ ${r.stock.updated} صنف`);
 }
 
 // ============ الموجه ============
@@ -1089,7 +1325,7 @@ export const COMMANDS = {
   'frs.addSub': frsAddSub,
   'clients.toggleAccount': clientsToggleAccount,
   'clients.toggleWallet': clientsToggleWallet,
-  'clients.patch': (role, p) => clientsPatch(role, p, p.msg),
+  'clients.patch': (ctx, p) => clientsPatch(ctx, p, p.msg),
   'clients.create': clientsCreate,
   'clients.prodAdd': clientsProdAdd,
   'clients.prodStep': clientsProdStep,
@@ -1109,21 +1345,10 @@ export const COMMANDS = {
   'users.add': usersAdd,
   'users.setStatus': usersSetStatus,
   'users.update': usersUpdate,
+  'users.resetPin': usersResetPin,
+  'users.setPhone': usersSetPhone,
   'branches.add': branchesAdd,
   'branches.toggle': branchesToggle,
   'branches.delete': branchesDelete,
   'integration.sync': integrationSync,
 };
-
-// ============ التكامل مع نظام العمليات ============
-
-/** B2B: دورة تكامل يدوية — يرسل العملاء/الأصناف المتغيرة والأحداث المتأخرة ويحدّث المتاح للبيع */
-async function integrationSync(role) {
-  if (role !== 'b2b') throw httpError(403, 'التكامل صلاحية B2B');
-  if (!integrationOn()) throw httpError(400, 'التكامل مع نظام العمليات غير مفعّل على هذه البيئة');
-  const { runCycle } = await import('./integration.js');
-  const r = await runCycle();
-  return `مزامنة العمليات: ${r.master.customers} عميل و${r.master.products} صنف تغيّروا، أُرسل ${r.delivered.sent} حدث`
-    + (r.delivered.failed || r.delivered.dead ? ` (تعثّر ${r.delivered.failed + r.delivered.dead})` : '')
-    + (r.stock.error ? ` — تعذّر تحديث المتاح: ${r.stock.error}` : ` — حُدّث المتاح لـ ${r.stock.updated} صنف`);
-}

@@ -331,3 +331,48 @@ CREATE TABLE IF NOT EXISTS integration_hashes (
   hash    text NOT NULL,
   PRIMARY KEY (entity, id)
 );
+
+-- ============================================================
+-- الحسابات والرمز السري وفصل بيانات المنشآت (docs/SECURITY.md) — إضافات فقط
+-- ============================================================
+-- org_users = حسابات الدخول: كل حساب له جوال فريد ورمز سري (PIN) ودور ثابت ومنشأة (NULL = فريق B2B)
+ALTER TABLE org_users ADD COLUMN IF NOT EXISTS client_id bigint;
+ALTER TABLE org_users ADD COLUMN IF NOT EXISTS phone text;
+ALTER TABLE org_users ADD COLUMN IF NOT EXISTS pin_hash text;                          -- salt:hash (scrypt + pepper من البيئة)
+ALTER TABLE org_users ADD COLUMN IF NOT EXISTS must_change_pin boolean NOT NULL DEFAULT true;
+ALTER TABLE org_users ADD COLUMN IF NOT EXISTS last_login_at timestamptz;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_org_users_phone ON org_users (phone) WHERE phone IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_org_users_client ON org_users (client_id);
+
+-- قفل المحاولات: مفتاح = p:<جوال> أو ip:<عنوان>
+CREATE TABLE IF NOT EXISTS login_throttle (
+  key          text PRIMARY KEY,
+  fails        int NOT NULL DEFAULT 0,
+  locks        int NOT NULL DEFAULT 0,         -- عدد مرات القفل المتتالية (يصعّد المدة)
+  window_start timestamptz NOT NULL DEFAULT now(),
+  locked_until timestamptz
+);
+
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS user_id bigint;
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS expires_at timestamptz;
+
+-- المنشأة على كل سجل يخص عميلًا
+ALTER TABLE invoices    ADD COLUMN IF NOT EXISTS client_id bigint;
+ALTER TABLE tickets     ADD COLUMN IF NOT EXISTS client_id bigint;
+ALTER TABLE topup_reqs  ADD COLUMN IF NOT EXISTS client_id bigint;
+ALTER TABLE saved_lists ADD COLUMN IF NOT EXISTS client_id bigint;
+ALTER TABLE notifs      ADD COLUMN IF NOT EXISTS client_id bigint;                     -- NULL = لكل من يحمل الدور
+ALTER TABLE wallet      ADD COLUMN IF NOT EXISTS client_id bigint;
+ALTER TABLE wallet_tx   ADD COLUMN IF NOT EXISTS client_id bigint;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_wallet_client ON wallet (client_id) WHERE client_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_wallet_tx_client ON wallet_tx (client_id, id DESC);
+CREATE INDEX IF NOT EXISTS idx_orders_client ON orders (client_id, created_at DESC);
+
+-- الفروع لكل منشأة (كان الاسم مفتاحًا عامًا لكل المنصة)
+ALTER TABLE branches ADD COLUMN IF NOT EXISTS client_id bigint NOT NULL DEFAULT 1;
+ALTER TABLE branches DROP CONSTRAINT IF EXISTS branches_pkey;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_branches_client_name ON branches (client_id, name);
+
+-- شبكة الفرنشايز: عميل الممنوح نفسه وعميل مانحه
+ALTER TABLE frs ADD COLUMN IF NOT EXISTS client_id bigint;
+ALTER TABLE frs ADD COLUMN IF NOT EXISTS granter_id bigint;

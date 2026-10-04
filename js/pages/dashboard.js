@@ -124,7 +124,7 @@ function dashOrderRow(st, o) {
 function sideColumn(st) {
   const W = st.wallet;
   const parts = [];
-  const orgCr = ORG_CR[st.role] || DEFAULT_CR;
+  const orgCr = (st.me || {}).cr || '—';
 
   if (['owner', 'fin', 'frz', 'frzs', 'fr'].includes(st.role)) {
     parts.push(`

@@ -149,26 +149,21 @@ export async function flush({ ids = null, limit = 50, budgetMs = 4000 } = {}) {
 export async function customerPayload(clientId) {
   const [c] = await sql`SELECT * FROM clients WHERE id = ${clientId}`;
   if (!c) return null;
-  let branches = Array.isArray(c.branches) ? c.branches : [];
-  if (Number(clientId) === 1) {
-    // منشأة العينة: فروعها في جدول branches العام (قبل فصل البيانات لكل منشأة)
-    const rows = await sql`SELECT name, city, st, loc FROM branches`;
-    branches = [...branches, ...rows.filter((b) => b.st !== 'off').map((b) => ({ name: b.name, city: b.city, loc: b.loc }))];
-  }
-  const seen = new Set();
+  // فروع المنشأة النشطة من جدول الفروع (مصدرها الوحيد بعد فصل بيانات المنشآت)
+  const branches = await sql`SELECT name, city, loc FROM branches WHERE client_id = ${clientId} AND st <> 'off' ORDER BY name`;
   return {
     id: String(c.id), name: c.name, cr: c.cr, city: c.city, type: c.type || null, active: c.st !== 'susp',
     creditLimit: Number(c.cr_limit),
-    branches: branches.filter((b) => b?.name && !seen.has(b.name) && seen.add(b.name)).map((b) => ({
-      key: `${c.id}:${b.name}`, name: b.name, city: b.city || c.city, address: b.loc?.addr || null,
-    })),
+    branches: branches.map((b) => ({ key: `${c.id}:${b.name}`, name: b.name, city: b.city || c.city, address: b.loc?.addr || null })),
   };
 }
 
 /** الطلب المعتمد تجاريًا → أمر تنفيذ في العمليات (بأسعار لحظة الطلب) */
 export async function emitOrderConfirmed(order, role) {
   if (!enabled()) return null;
-  const clientId = String(order.client_id || 1);
+  // طلب بلا منشأة (مثل طلب واتساب من رقم غير مسجّل) لا يُرسل آليًا — يعالجه فريق B2B يدويًا
+  if (order.client_id == null) return null;
+  const clientId = String(order.client_id);
   const lines = (order.items || []).filter((i) => Number(i.qty) > 0).map((i, n) => ({
     lineNo: n + 1, productId: i.pid, qty: Math.floor(Number(i.qty)), unitPrice: Number(i.price ?? 0), discountPct: 0,
   }));
@@ -294,7 +289,7 @@ export async function runCycle() {
   const c = config();
   // طلب معتمد تجاريًا (b2b) لم يُسجَّل له حدث — مثلًا انقطع التنفيذ بين التحديث والتسجيل: يُرسل الآن
   const since = c.since || '1970-01-01';
-  const missed = await sql`SELECT * FROM orders WHERE st = 'b2b' AND ops_sent_at IS NULL AND created_at >= ${since}::timestamptz ORDER BY created_at LIMIT 50`;
+  const missed = await sql`SELECT * FROM orders WHERE st = 'b2b' AND ops_sent_at IS NULL AND client_id IS NOT NULL AND created_at >= ${since}::timestamptz ORDER BY created_at LIMIT 50`;
   for (const o of missed) await emitOrderConfirmed(o, 'repair');
   const master = await syncMasterData();
   const delivered = await flush({ limit: 100, budgetMs: 20000 });

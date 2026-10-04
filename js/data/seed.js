@@ -51,11 +51,15 @@ export const BASE_NOTIFS = {
 export function createInitialState() {
   return {
     // الجلسة والتنقل
-    auth: 'phone',          // phone | otp | user
+    auth: 'login',          // login: جوال + رمز سري | pin: تعيين رمز جديد بعد دخول برمز مؤقت
+    me: null,               // هوية الحساب من الخادم {id, name, role, clientId, org, branch, phone, frsId, cr}
     role: null,             // null = شاشة الدخول
     page: 'dash',
     mTab: 'home', mStack: [],   // تنقّل واجهة الجوال (تبويب سفلي + مكدس push)
-    phone: '', otp: '', adminKey: '',
+    phone: '', pin: '', adminKey: '', busy: false,
+    npOld: '', npNew: '', npNew2: '',               // تغيير الرمز السري
+    usPhone: '', usPin: '', uePhone: '', uePin: '', // حسابات: جوال + رمز مؤقت
+    clStaffPhone: '', clStaffPin: '',
     notifOpen: false, toast: null,
 
     // الكتالوج والسلة
@@ -305,7 +309,7 @@ export function createInitialState() {
         st: 'closed' },
     ],
 
-    notifUnread: 2,
+    notifUnread: 0,
     extraNotifs: {},   // إشعارات مولدة أثناء الجلسة حسب الدور
   };
 }

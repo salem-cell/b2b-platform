@@ -28,10 +28,13 @@ export function nowLabel() {
   return new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Riyadh' }).format(new Date());
 }
 
-/** بث إشعار لأدوار محددة */
-export async function notify(roles, c, body) {
+/**
+ * إشعار لأدوار محددة. clientId = المنشأة المعنية: أدوار العملاء ترى الإشعار فقط إن كان لمنشأتها
+ * (أو عامًّا بلا منشأة)؛ إشعارات B2B لا تتقيد بمنشأة.
+ */
+export async function notify(roles, c, body, clientId = null) {
   for (const role of roles) {
-    await sql`INSERT INTO notifs (role, c, body, t) VALUES (${role}, ${c}, ${body}, 'الآن')`;
+    await sql`INSERT INTO notifs (role, c, body, t, client_id) VALUES (${role}, ${c}, ${body}, 'الآن', ${role === 'b2b' ? null : clientId})`;
   }
 }
 

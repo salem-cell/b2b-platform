@@ -24,10 +24,10 @@ export function showPricesFor(role) {
  */
 function stockLine(st, p) {
   const s = st.opsStock?.[p.id];
-  if (!s || !s.mapped || s.atp == null) return '';
-  const qty = st.role === 'b2b' ? ` <span class="num">(${s.atp})</span>` : '';
-  if (s.atp > 20) return `<div style="font-size:10px;font-weight:700;color:#1d7a3e;margin-top:4px">متوفر${qty}</div>`;
-  if (s.atp > 0) return `<div style="font-size:10px;font-weight:700;color:#b26a00;margin-top:4px">كمية محدودة${qty}</div>`;
+  if (!s || !s.mapped || !s.level) return '';
+  const qty = st.role === 'b2b' && s.atp != null ? ` <span class="num">(${s.atp})</span>` : '';
+  if (s.level === 'ok') return `<div style="font-size:10px;font-weight:700;color:#1d7a3e;margin-top:4px">متوفر${qty}</div>`;
+  if (s.level === 'low') return `<div style="font-size:10px;font-weight:700;color:#b26a00;margin-top:4px">كمية محدودة${qty}</div>`;
   return `<div style="font-size:10px;font-weight:700;color:#b42318;margin-top:4px">غير متوفر حاليًا${s.eta ? ` — يتوفر ${esc(s.eta)}` : ''}</div>`;
 }
 

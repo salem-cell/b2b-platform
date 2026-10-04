@@ -1,6 +1,4 @@
 // أدوات HTTP للدوال السيرفرلس: قراءة الجسم، الردود، الكوكيز، غلاف الأخطاء
-import { randomBytes } from 'node:crypto';
-import { sql } from './db.js';
 
 export function send(res, status, obj) {
   res.statusCode = status;
@@ -37,17 +35,13 @@ export function clearSessionCookie(res) {
   res.setHeader('Set-Cookie', `${COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Secure; Max-Age=0`);
 }
 
-export async function createSession(phone) {
-  const token = randomBytes(24).toString('hex');
-  await sql`INSERT INTO sessions (token, phone) VALUES (${token}, ${phone})`;
-  return token;
-}
-
+/**
+ * سياق الجلسة (الحساب الحي: الدور، المنشأة، الاسم…) أو null. الدور والمنشأة من سجل الحساب لا من الطلب.
+ * الجلسات القديمة (قبل الحسابات) بلا حساب مرتبط فتُعتبر منتهية.
+ */
 export async function getSession(req) {
-  const token = parseCookies(req)[COOKIE];
-  if (!token) return null;
-  const rows = await sql`SELECT token, phone, role FROM sessions WHERE token = ${token}`;
-  return rows[0] || null;
+  const { loadContext } = await import('./auth.js');
+  return loadContext(parseCookies(req)[COOKIE]);
 }
 
 /** غلاف موحد: أخطاء JSON + قياس المنهج */

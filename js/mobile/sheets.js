@@ -3,13 +3,13 @@
 // لستة جديدة، اقتراح منتج، إضافة فرع بموقع
 // ============================================================
 import { esc, ICONS } from '../core/dom.js';
+import { firstBranch } from '../core/session.js';
 import { fmt } from '../core/format.js';
 import { prodThumb, chip, input, pinIcon } from '../ui.js';
 import { findOrder } from '../actions.js';
 import { NOTIF_CHIP } from '../data/constants.js';
 import { PRODUCTS, PRODUCT_MAP } from '../data/products.js';
 import { showPricesFor } from '../pages/catalog.js';
-import { BASE_NOTIFS } from '../data/seed.js';
 
 function sheet(inner, { scroll = false } = {}) {
   return `
@@ -26,7 +26,7 @@ function cartSheet(st) {
   return sheet(`
     <div class="flex-center gap-10" style="flex:none;padding:14px 20px 8px">
       <div class="grow" style="font-size:16px;font-weight:800">السلة</div>
-      <div style="height:32px;display:flex;align-items:center;padding:0 11px;background:var(--c-chip-bg);border-radius:999px;font-size:10.5px;font-weight:800;color:var(--c-info)">التسليم: فرع العليا</div>
+      <div style="height:32px;display:flex;align-items:center;padding:0 11px;background:var(--c-chip-bg);border-radius:999px;font-size:10.5px;font-weight:800;color:var(--c-info)">التسليم: ${esc(firstBranch(st.me) || (st.me || {}).org || '')}</div>
       <div style="width:44px;height:44px;border-radius:999px;display:flex;align-items:center;justify-content:center;cursor:pointer" data-action="closeAll">${ICONS.close('#7d7990', 14)}</div>
     </div>
     <div class="m-sheet-body" style="padding:0 20px">
@@ -80,7 +80,7 @@ function reasonSheet(st) {
 }
 
 function notifSheet(st) {
-  const notifs = [...((st.extraNotifs || {})[st.role] || []), ...(BASE_NOTIFS[st.role] || [])];
+  const notifs = (st.extraNotifs || {})[st.role] || [];
   return sheet(`
     <div class="flex-center" style="flex:none;padding:16px 20px 8px">
       <div class="grow" style="font-size:16px;font-weight:800">الإشعارات</div>
