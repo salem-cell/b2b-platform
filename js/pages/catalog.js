@@ -22,7 +22,7 @@ export function showPricesFor(role) {
  * المتاح كما يحسبه نظام العمليات (لا مخزون وهمي): متوفر / كمية محدودة / ينفد مع موعد التوريد إن وُجد.
  * الكمية الدقيقة تظهر لفريق B2B فقط؛ العميل يرى الحالة. بلا تكامل أو صنف غير مربوط → لا يُعرض شيء.
  */
-function stockLine(st, p) {
+export function stockLine(st, p) {
   const s = st.opsStock?.[p.id];
   if (!s || !s.mapped || !s.level) return '';
   const qty = st.role === 'b2b' && s.atp != null ? ` <span class="num">(${s.atp})</span>` : '';

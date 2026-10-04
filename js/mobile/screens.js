@@ -13,7 +13,8 @@ import {
   CAN_ORDER, CAN_REQUEST, CAN_PAY, ORG_CR, DEFAULT_CR,
 } from '../data/constants.js';
 import { PRODUCTS, PRODUCT_MAP } from '../data/products.js';
-import { showPricesFor, filterProducts } from '../pages/catalog.js';
+import { showPricesFor, filterProducts, stockLine } from '../pages/catalog.js';
+import { opsPanel } from '../overlays/drawer.js';
 import { rowAction } from '../pages/orders.js';
 import { ticketChip } from '../pages/b2b.js';
 import { homeHeader, pushHeader } from './shell.js';
@@ -320,6 +321,7 @@ export function renderMCatalog(st) {
               </div>
               <div style="font-size:12px;font-weight:800;line-height:1.5;margin-top:8px;min-height:36px">${esc(p.name)}</div>
               <div style="font-size:10px;color:var(--c-faint);margin-top:1px">${esc(p.unit)}</div>
+              ${stockLine(st, p)}
               ${p.out ? '<div class="mt-9" style="min-height:44px;display:flex;align-items:center"><span class="chip chip-danger" style="font-size:10.5px;padding:5px 12px">نافد حاليًا</span></div>'
                 : qty > 0 && canOrder ? `
                 <div class="flex-center gap-7 mt-9" style="background:var(--c-info-bg);border-radius:12px;padding:2px">
@@ -743,6 +745,7 @@ export function renderMOrderDetail(st) {
           <div style="font-size:13px;font-weight:800;margin-bottom:14px">رحلة الطلب</div>
           ${timeline}
         </div>
+        ${o.ops ? `<div style="margin-top:12px">${opsPanel(o)}</div>` : ''}
         <div class="m-card" style="overflow:hidden;margin-top:12px">
           ${o.items.map((i) => {
             const p = PRODUCT_MAP[i.pid];

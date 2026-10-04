@@ -131,7 +131,7 @@ function drawerActions(st, o) {
 }
 
 /** التنفيذ في نظام العمليات: الحالة كما تبلّغها العمليات + موعد توفر النواقص + خطوات التنفيذ بالترتيب */
-function opsPanel(o) {
+export function opsPanel(o) {
   if (!o.ops) return '';
   const ev = [...(o.ops.events || [])].reverse();
   return `
