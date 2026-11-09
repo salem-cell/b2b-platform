@@ -2,6 +2,10 @@
 # in turn triggers this platform's own cycle. Does nothing until the repository VARIABLE `OPS_HEARTBEAT_URL` is set
 # (e.g. https://<ops-host>) together with the SECRETS `OPS_SCHEDULER_KEY_ID` and `OPS_SCHEDULER_KEY_SECRET`
 # (the pair configured in OPS as INTEGRATION_KEYS_SCHEDULER). See docs/INTEGRATION.md.
+#
+# What to expect (measured over five weeks, checked 2026-11-09): GitHub starts scheduled workflows when it has
+# capacity, so this ran 4–8 times a day, not every 5 minutes. It is the safety net for the hours nobody has OPS open;
+# while an OPS screen is open, OPS runs the same cycle by itself every two minutes.
 name: integration-cycle
 
 on:
@@ -9,13 +13,14 @@ on:
     - cron: '*/5 * * * *'
   workflow_dispatch:
 
-permissions: {}
+permissions:
+  actions: write # only to re-enable this workflow (last step); the heartbeat itself uses no GitHub permission
 
 jobs:
   heartbeat:
     if: ${{ vars.OPS_HEARTBEAT_URL != '' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 3
     steps:
       - name: Signed heartbeat
         env:
@@ -31,3 +36,14 @@ jobs:
           curl -fsS --max-time 60 -X POST "${OPS_URL%/}${path}" \
             -H "Accept: application/json" -H "X-B2B-System: scheduler" -H "X-B2B-Key-Id: ${KEY_ID}" \
             -H "X-B2B-Timestamp: ${ts}" -H "X-B2B-Signature: ${sig}"
+
+      # GitHub disables the schedule of a public repository after 60 days without repository activity — the heartbeat
+      # would stop silently. Re-enabling the workflow through the API on every run (a no-op while it is enabled) is the
+      # usual keep-alive for that rule; if GitHub ever suspends it anyway, Actions → integration-cycle → Enable workflow.
+      - name: Keep this schedule enabled
+        if: ${{ always() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api -X PUT "repos/${{ github.repository }}/actions/workflows/integration-cycle.yml/enable" \
+            || echo "::warning::could not re-enable the schedule — check that it is still active (Actions → integration-cycle)"
