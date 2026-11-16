@@ -208,12 +208,22 @@ function eventText(e) {
     case 'delivery.failed': return `فشل التسليم — ${d.reasonAr || d.reason || ''}`;
     case 'order.cancelled': return 'أُلغي في العمليات وأُفرج عن الحجز';
     case 'order.cancel_rejected': return `تعذّر الإلغاء — ${d.reason || 'التنفيذ بدأ'}`;
+    case 'order.short': {
+      const short = (d.lines || []).filter((l) => Number(l.short) > 0).map((l) => `${l.sku}: ناقص ${l.short} من ${l.ordered}`);
+      return `نقص عند التجهيز — ${short.join('، ') || 'كمية غير متوفرة'}${d.fulfilmentCancelled ? ' — لم يُجهَّز شيء والطلب ينتظر المخزون' : ''}`;
+    }
+    case 'picking.completed': return d.shortPicked ? 'اكتمل التجهيز بنقص في بعض الأصناف' : 'اكتمل التجهيز';
+    case 'order.unpacked': return `فُكّت تعبئة الطلب في المستودع${d.reason ? ` — ${d.reason}` : ''}`;
+    case 'order.unloaded': return `أُنزل الطلب من الشاحنة${d.trip ? ` (رحلة ${d.trip})` : ''}${d.reason ? ` — ${d.reason}` : ''}`;
+    case 'order.putback': return `أُعيدت بضاعة الطلب إلى الرفوف${d.reason ? ` — ${d.reason}` : ''}`;
     case 'return.created': return `فُتح مرتجع ${d.return}${d.reasonAr ? ` — ${d.reasonAr}` : ''}`;
     case 'return.approved': return `اعتُمد المرتجع ${d.return}`;
     case 'return.received': return `استُلم المرتجع ${d.return} في المستودع للفحص`;
     case 'return.inspect': return `يُفحص المرتجع ${d.return}`;
     case 'return.closed': return `أُقفل المرتجع ${d.return} — ${d.decisionAr || d.decision || ''}`;
     case 'return.rejected': return `رُفض المرتجع ${d.return}`;
+    case 'return.cancelled': return `أُلغي المرتجع ${d.return}${d.reason ? ` — ${d.reason}` : ''}`;
+    case 'return.shipped': return `شُحن المرتجع ${d.return} إلى المورد`;
     default: return opsStatusLabel(d.status) || e.type;
   }
 }
@@ -267,7 +277,10 @@ export async function applyOpsEvent(e) {
   } else if (e.type === 'order.cancel_rejected') {
     log.push(opsLog(eventText(e)));
     notes.push([['b2b'], 'طلبات', `تعذّر إلغاء ${o.id} في العمليات — التنفيذ بدأ، تواصل مع فريق العمليات`]);
-  } else if (e.type === 'return.created' || e.type === 'return.closed') {
+  } else if (e.type === 'order.short' || e.type === 'order.putback' || e.type === 'order.unloaded' || (e.type === 'picking.completed' && d.shortPicked)) {
+    log.push(opsLog(eventText(e)));
+    notes.push([['b2b', 'owner'], 'طلبات', `${o.id}: ${eventText(e)}`]);
+  } else if (e.type === 'return.created' || e.type === 'return.closed' || e.type === 'return.cancelled') {
     log.push(opsLog(eventText(e)));
     notes.push([['b2b', 'owner'], 'طلبات', `${o.id}: ${eventText(e)}`]);
   } else if (e.type === 'order.backordered') {
